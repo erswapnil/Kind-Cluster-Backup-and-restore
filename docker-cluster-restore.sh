@@ -128,7 +128,7 @@ for f in folders:
 
 if [[ -z "$CLUSTER_LIST" ]]; then
     error "No cluster folders found in ${GITHUB_USER}/${GITHUB_REPO}."
-    echo "  Make sure you have run smart-backup.sh first to upload cluster artifacts."
+    echo "  Make sure you have run docker-cluster-backup.sh first to upload cluster artifacts."
     exit 1
 fi
 
@@ -137,7 +137,12 @@ echo ""
 printf "  ${BOLD}%-4s  %-20s  %-16s  %-16s  %s${RESET}\n" "#" "CLUSTER NAME" "SNAPSHOT" "K8S CONFIG" "CNPG BLUEPRINTS"
 divider
 
-mapfile -t CLUSTERS <<< "$CLUSTER_LIST"
+# macOS bash 3.2 compatible — no mapfile
+CLUSTERS=()
+while IFS= read -r line; do
+    [[ -n "$line" ]] && CLUSTERS+=("$line")
+done <<< "$CLUSTER_LIST"
+
 VALID_CLUSTERS=()
 
 for i in "${!CLUSTERS[@]}"; do
