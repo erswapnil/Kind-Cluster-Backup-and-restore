@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
 # docker-cluster-restore.sh
-# Restores any kind cluster backed up to GitHub.
+# Restores any kind cluster backed up to a PUBLIC GitHub repo.
+#
+# No GitHub token required — works with any public repo.
 #
 # What it asks you:
-#   1. GitHub username + PAT + repo  (to fetch the list of available clusters)
+#   1. GitHub username + repo name   (to fetch the list of available clusters)
 #   2. Which cluster to restore      (shows live list from GitHub, pick by number)
 #   3. CNPG operator version         (e.g. 1.29.1)
 #
@@ -29,9 +31,6 @@ warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 header()  { echo -e "\n${BOLD}${CYAN}═══ $* ═══${RESET}\n"; }
 divider() { echo "────────────────────────────────────────────────────────"; }
-
-cleanup() { unset GITHUB_TOKEN 2>/dev/null || true; }
-trap cleanup EXIT
 
 # ── Install CNPG operator at exact version ────────────────────────────────────
 install_cnpg_operator() {
@@ -70,6 +69,7 @@ clear
 echo ""
 echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
 echo -e "${BOLD}${CYAN}║        GitHub → Kind Cluster Restore Tool            ║${RESET}"
+echo -e "${BOLD}${CYAN}║        (no GitHub token required)                    ║${RESET}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
 echo ""
 
@@ -83,29 +83,26 @@ docker info &>/dev/null 2>&1 || {
     exit 1
 }
 
-# ── Step 1: GitHub credentials ────────────────────────────────────────────────
-header "Step 1 · GitHub credentials"
+# ── Step 1: GitHub repo details ───────────────────────────────────────────────
+header "Step 1 · GitHub repo details"
 
-read -rp "$(echo -e "${BOLD}GitHub username: ${RESET}")" GITHUB_USER
-
-echo -e "${YELLOW}GitHub Personal Access Token (input hidden — needs 'repo' scope):${RESET}"
-echo -e "  Create one at: ${CYAN}https://github.com/settings/tokens${RESET}"
-echo ""
-read -rsp "$(echo -e "${BOLD}GitHub PAT: ${RESET}")" GITHUB_TOKEN
-echo ""
-
+read -rp "$(echo -e "${BOLD}GitHub username (repo owner): ${RESET}")" GITHUB_USER
 read -rp "$(echo -e "${BOLD}GitHub repo name (e.g. Kind-Cluster-Backup-and-restore): ${RESET}")" GITHUB_REPO
 
 echo ""
-info "Verifying credentials..."
-LOGIN=$(curl -s \
-    -H "Authorization: token ${GITHUB_TOKEN}" \
-    -H "Accept: application/vnd.github+json" \
-    "https://api.github.com/user" \
-    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('login','ERROR'))" 2>/dev/null)
+info "Verifying repo is accessible..."
 
-[[ "$LOGIN" == "ERROR" || -z "$LOGIN" ]] && { error "Invalid token."; exit 1; }
-success "Authenticated as: ${LOGIN}"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}")
+
+if [[ "$HTTP_CODE" != "200" ]]; then
+    error "Repo '${GITHUB_USER}/${GITHUB_REPO}' not found or not public (HTTP ${HTTP_CODE})."
+    echo "  Make sure the repo is public and the username/name are correct."
+    exit 1
+fi
+
+success "Repo ${GITHUB_USER}/${GITHUB_REPO} is accessible (public)."
 
 # ── Step 2: Fetch available clusters from GitHub ──────────────────────────────
 header "Step 2 · Available clusters in GitHub repo"
@@ -113,11 +110,10 @@ header "Step 2 · Available clusters in GitHub repo"
 info "Fetching folder list from ${GITHUB_USER}/${GITHUB_REPO}..."
 
 CONTENTS=$(curl -s \
-    -H "Authorization: token ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/")
 
-# Extract folders that contain cnpg-snapshot.tar (i.e. valid cluster backups)
+# Extract directories (each directory = a cluster backup)
 CLUSTER_LIST=$(echo "$CONTENTS" | python3 -c "
 import sys, json
 items = json.load(sys.stdin)
@@ -132,7 +128,7 @@ if [[ -z "$CLUSTER_LIST" ]]; then
     exit 1
 fi
 
-# Verify each folder has the required files and get snapshot size
+# Verify each folder has the required files and show snapshot size
 echo ""
 printf "  ${BOLD}%-4s  %-20s  %-16s  %-16s  %s${RESET}\n" "#" "CLUSTER NAME" "SNAPSHOT" "K8S CONFIG" "CNPG BLUEPRINTS"
 divider
@@ -148,9 +144,8 @@ VALID_CLUSTERS=()
 for i in "${!CLUSTERS[@]}"; do
     FOLDER="${CLUSTERS[$i]}"
 
-    # Check for the three required files via GitHub API
+    # Check files in folder via public GitHub API (no auth needed for public repos)
     FILES=$(curl -s \
-        -H "Authorization: token ${GITHUB_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${FOLDER}" \
         | python3 -c "
@@ -158,9 +153,9 @@ import sys, json
 try:
     items = json.load(sys.stdin)
     files = {i['name']: i.get('size', 0) for i in items if i['type'] == 'file'}
-    tar  = '✓ ' + str(round(files.get('cnpg-snapshot.tar', 0)/(1024*1024), 0)).rstrip('0').rstrip('.') + ' MB' if 'cnpg-snapshot.tar' in files else '✗ missing'
-    cfg  = '✓ ' + str(round(files.get('cnp-cluster-config.yaml', 0)/1024, 0)).rstrip('0').rstrip('.') + ' KB'  if 'cnp-cluster-config.yaml' in files else '✗ missing'
-    bp   = '✓ ' + str(round(files.get('cnpg-db-blueprints.yaml', 0)/1024, 0)).rstrip('0').rstrip('.') + ' KB'  if 'cnpg-db-blueprints.yaml' in files else '✗ missing'
+    tar  = 'yes ' + str(round(files.get('cnpg-snapshot.tar', 0)/(1024*1024), 0)).rstrip('0').rstrip('.') + ' MB' if 'cnpg-snapshot.tar' in files else 'missing'
+    cfg  = 'yes ' + str(round(files.get('cnp-cluster-config.yaml', 0)/1024, 0)).rstrip('0').rstrip('.') + ' KB'  if 'cnp-cluster-config.yaml' in files else 'missing'
+    bp   = 'yes ' + str(round(files.get('cnpg-db-blueprints.yaml', 0)/1024, 0)).rstrip('0').rstrip('.') + ' KB'  if 'cnpg-db-blueprints.yaml' in files else 'missing'
     print(tar + '|' + cfg + '|' + bp)
 except Exception as e:
     print('error|error|error')
@@ -170,7 +165,7 @@ except Exception as e:
     CFG_STATUS=$(echo "$FILES" | cut -d'|' -f2)
     BP_STATUS=$(echo "$FILES"  | cut -d'|' -f3)
 
-    if [[ "$TAR_STATUS" == ✓* ]]; then
+    if [[ "$TAR_STATUS" == yes* ]]; then
         VALID_CLUSTERS+=("$FOLDER")
         NUM="${#VALID_CLUSTERS[@]}"
         printf "  ${BOLD}%-4s${RESET}  ${GREEN}%-20s${RESET}  %-16s  %-16s  %s\n" \
@@ -197,6 +192,7 @@ while true; do
     warn "Invalid. Enter a number between 1 and ${#VALID_CLUSTERS[@]}."
 done
 
+# Public repo URL — no credentials needed
 GIT_REPO="https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git"
 
 echo ""
@@ -283,13 +279,11 @@ success "cnpg_restore.sh is ready."
 # ── Step 7: Run restore ───────────────────────────────────────────────────────
 header "Step 7 · Restore cluster '${CLUSTER_NAME}'"
 
-# Build the authenticated repo URL for restore script
-AUTH_REPO_URL="https://${LOGIN}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${GITHUB_REPO}.git"
-
+# Public repo — no token needed in the URL
 info "Running: ./cnpg_restore.sh --git-repo <repo> --cluster-name ${CLUSTER_NAME} --cnpg-version ${CNPG_VERSION}"
 divider
 if ./cnpg_restore.sh \
-    --git-repo     "${AUTH_REPO_URL}" \
+    --git-repo     "${GIT_REPO}" \
     --cluster-name "${CLUSTER_NAME}" \
     --cnpg-version "${CNPG_VERSION}"; then
     divider
@@ -335,7 +329,7 @@ fi
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${GREEN}║  ✅  Restore complete!                                       ║${RESET}"
+echo -e "${BOLD}${GREEN}║  Restore complete!                                           ║${RESET}"
 echo -e "${BOLD}${GREEN}║                                                              ║${RESET}"
 echo -e "${BOLD}${GREEN}║  Cluster  : ${CLUSTER_NAME}$(printf '%*s' $((44 - ${#CLUSTER_NAME})) '')║${RESET}"
 echo -e "${BOLD}${GREEN}║  Operator : CNPG v${CNPG_VERSION}$(printf '%*s' $((43 - ${#CNPG_VERSION})) '')║${RESET}"
