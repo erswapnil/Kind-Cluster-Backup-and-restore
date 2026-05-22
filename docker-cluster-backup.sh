@@ -3,6 +3,8 @@
 # docker-cluster-backup.sh
 # Backs up any kind cluster and uploads all artifacts to GitHub automatically.
 #
+# Compatible with macOS default bash 3.2+
+#
 # What it asks you:
 #   1. Which cluster to back up  (shows live Docker list, you pick by number)
 #   2. GitHub username
@@ -54,46 +56,63 @@ header "Step 1 · Select a cluster to back up"
 
 echo -e "Scanning Docker for kind control-plane containers...\n"
 
-# Collect control-plane containers
-mapfile -t CONTAINER_IDS < <(docker ps -a --format '{{.ID}}|||{{.Names}}|||{{.Label "io.x-k8s.kind.cluster"}}' \
-    | awk -F'|||' '$2 ~ /-control-plane$/ {print $1}')
-mapfile -t CONTAINER_NAMES < <(docker ps -a --format '{{.ID}}|||{{.Names}}|||{{.Label "io.x-k8s.kind.cluster"}}' \
-    | awk -F'|||' '$2 ~ /-control-plane$/ {print $2}')
-mapfile -t CLUSTER_NAMES < <(docker ps -a --format '{{.ID}}|||{{.Names}}|||{{.Label "io.x-k8s.kind.cluster"}}' \
-    | awk -F'|||' '$2 ~ /-control-plane$/ {print $3}')
-mapfile -t CONTAINER_STATUS < <(docker ps -a --format '{{.ID}}|||{{.Names}}|||{{.Status}}' \
-    | awk -F'|||' '$2 ~ /-control-plane$/ {print $3}')
+# Use tab as separator (macOS bash 3.2 compatible — no mapfile, no ||| regex issues)
+CONTAINER_IDS=()
+CONTAINER_NAMES=()
+CLUSTER_NAMES=()
+CONTAINER_STATUS=()
+
+while IFS=$'\t' read -r cid cname cluster; do
+    case "$cname" in
+        *-control-plane)
+            CONTAINER_IDS+=("$cid")
+            CONTAINER_NAMES+=("$cname")
+            CLUSTER_NAMES+=("$cluster")
+            ;;
+    esac
+done < <(docker ps -a --format $'{{.ID}}\t{{.Names}}\t{{.Label "io.x-k8s.kind.cluster"}}')
+
+# Get status separately (avoid multi-field join issues)
+while IFS=$'\t' read -r cid cname status; do
+    case "$cname" in
+        *-control-plane)
+            CONTAINER_STATUS+=("$status")
+            ;;
+    esac
+done < <(docker ps -a --format $'{{.ID}}\t{{.Names}}\t{{.Status}}')
 
 if [[ ${#CONTAINER_IDS[@]} -eq 0 ]]; then
     error "No kind control-plane containers found. Is any kind cluster running?"
     exit 1
 fi
 
-# Print table
-printf "  ${BOLD}%-4s  %-14s  %-36s  %-14s  %s${RESET}\n" "#" "CONTAINER ID" "CONTAINER NAME" "CLUSTER" "STATUS"
+# Print table header
+printf "  ${BOLD}%-4s  %-14s  %-36s  %-16s  %s${RESET}\n" \
+    "#" "CONTAINER ID" "CONTAINER NAME" "CLUSTER" "STATUS"
 divider
+
 for i in "${!CONTAINER_IDS[@]}"; do
-    STATUS="${CONTAINER_STATUS[$i]}"
-    # Colour status
+    STATUS="${CONTAINER_STATUS[$i]:-unknown}"
     if [[ "$STATUS" == Up* ]]; then
-        STATUS_FMT="${GREEN}${STATUS}${RESET}"
+        STATUS_COL="${GREEN}${STATUS}${RESET}"
     else
-        STATUS_FMT="${YELLOW}${STATUS}${RESET}"
+        STATUS_COL="${YELLOW}${STATUS}${RESET}"
     fi
-    printf "  ${BOLD}%-4s${RESET}  %-14s  %-36s  %-14s  " \
+    printf "  ${BOLD}%-4s${RESET}  %-14s  %-36s  %-16s  " \
         "$((i+1))" "${CONTAINER_IDS[$i]}" "${CONTAINER_NAMES[$i]}" "${CLUSTER_NAMES[$i]}"
-    echo -e "${STATUS_FMT}"
+    echo -e "${STATUS_COL}"
 done
 echo ""
 
 # Pick cluster
+COUNT="${#CONTAINER_IDS[@]}"
 while true; do
-    read -rp "$(echo -e "${BOLD}Enter number to select cluster [1-${#CONTAINER_IDS[@]}]: ${RESET}")" PICK
-    if [[ "$PICK" =~ ^[0-9]+$ ]] && (( PICK >= 1 && PICK <= ${#CONTAINER_IDS[@]} )); then
+    read -rp "$(echo -e "${BOLD}Enter number to select cluster [1-${COUNT}]: ${RESET}")" PICK
+    if [[ "$PICK" =~ ^[0-9]+$ ]] && [ "$PICK" -ge 1 ] && [ "$PICK" -le "$COUNT" ]; then
         IDX=$((PICK - 1))
         break
     fi
-    warn "Invalid selection. Enter a number between 1 and ${#CONTAINER_IDS[@]}."
+    warn "Invalid. Enter a number between 1 and ${COUNT}."
 done
 
 CONTAINER_ID="${CONTAINER_IDS[$IDX]}"
@@ -139,19 +158,18 @@ if [[ "$LOGIN" == "ERROR" || -z "$LOGIN" ]]; then
 fi
 success "Authenticated as: ${LOGIN}"
 
-# Verify repo exists and is accessible
+# Verify repo exists
 REPO_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
     -H "Authorization: token ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}")
 
 if [[ "$REPO_CHECK" != "200" ]]; then
-    error "Repo '${GITHUB_USER}/${GITHUB_REPO}' not found or not accessible (HTTP ${REPO_CHECK})."
-    exit 1
+    error "Repo '${GITHUB_USER}/${GITHUB_REPO}' not found (HTTP ${REPO_CHECK})."; exit 1
 fi
 success "Repo ${GITHUB_USER}/${GITHUB_REPO} is accessible."
 
-# Check if cluster folder already exists in the repo
+# Check if cluster folder already exists
 FOLDER_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
     -H "Authorization: token ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
@@ -275,6 +293,6 @@ echo -e "    ${GREEN}✓${RESET}  ${CLUSTER_NAME}/cnp-cluster-config.yaml    (${
 echo -e "    ${GREEN}✓${RESET}  ${CLUSTER_NAME}/cnpg-db-blueprints.yaml    (${BP_SIZE})"
 echo ""
 echo -e "  ${BOLD}To restore this cluster on another machine:${RESET}"
-echo -e "  ${YELLOW}curl -fsSL https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/restore-and-verify.sh \\${RESET}"
-echo -e "  ${YELLOW}  -o restore-and-verify.sh && chmod +x restore-and-verify.sh && ./restore-and-verify.sh${RESET}"
+echo -e "  ${YELLOW}curl -fsSL https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/docker-cluster-restore.sh \\${RESET}"
+echo -e "  ${YELLOW}  -o docker-cluster-restore.sh && chmod +x docker-cluster-restore.sh && ./docker-cluster-restore.sh${RESET}"
 echo ""
