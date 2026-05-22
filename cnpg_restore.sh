@@ -8,7 +8,7 @@
 #   ./cnpg_restore.sh [--git-repo <URL>] [--git-branch <branch>] [--cluster-name <name>]
 #
 # Defaults:
-#   GIT_REPO     = https://github.com/YOUR_ORG/cnpg-migration-artifacts.git
+#   GIT_REPO     = https://github.com/erswapnil/Kind-Cluster-Backup-and-restore.git
 #   GIT_BRANCH   = main
 #   CLUSTER_NAME = cnpg
 #   CNPG_VERSION = 1.28.1
@@ -27,7 +27,7 @@ error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 step()    { echo -e "\n${BOLD}━━━ $* ━━━${NC}"; }
 
 # ─── Defaults (override via flags or env vars) ────────────────────────────────
-GIT_REPO="${GIT_REPO:-https://github.com/YOUR_ORG/cnpg-migration-artifacts.git}"
+GIT_REPO="${GIT_REPO:-https://github.com/erswapnil/Kind-Cluster-Backup-and-restore.git}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 CLUSTER_NAME="${CLUSTER_NAME:-cnpg}"
 CNPG_VERSION="${CNPG_VERSION:-1.28.1}"
