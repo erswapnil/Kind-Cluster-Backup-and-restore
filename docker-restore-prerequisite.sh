@@ -194,16 +194,21 @@ if command -v docker &>/dev/null; then
     fi
 else
     echo ""
-    warn "Docker is not installed."
+    warn "Docker is not installed. Installing now..."
     echo ""
     if [[ "$PLATFORM" == "macOS" ]]; then
-        echo -e "  ${YELLOW}Docker Desktop must be installed manually on macOS.${RESET}"
-        echo -e "  Download from: ${CYAN}https://www.docker.com/products/docker-desktop${RESET}"
+        info "Installing Docker Desktop via Homebrew Cask..."
+        brew install --cask docker
+        success "Docker Desktop installed."
         echo ""
-        echo -e "  After installing Docker Desktop:"
-        echo -e "  1. Open Docker Desktop from Applications"
-        echo -e "  2. Wait for the whale icon in the menu bar to become solid"
-        echo -e "  3. Re-run this script"
+        echo -e "  ${YELLOW}One manual step required:${RESET}"
+        echo -e "  1. Open Docker Desktop: ${CYAN}open -a Docker${RESET}"
+        echo -e "  2. Complete the setup wizard (accept the license)"
+        echo -e "  3. Wait for the whale icon in the menu bar to become solid"
+        echo -e "  4. Re-run this script"
+        echo ""
+        info "Opening Docker Desktop now..."
+        open -a Docker 2>/dev/null || true
     else
         echo -e "  ${YELLOW}Installing Docker Engine on Linux...${RESET}"
         curl -fsSL https://get.docker.com | sudo bash
@@ -213,7 +218,7 @@ else
         echo -e "  Then run:  sudo systemctl start docker"
     fi
     echo ""
-    error "Docker is required. Please install and start it, then re-run this script."
+    error "Docker is installed but needs to finish starting up. Re-run this script once the whale icon is solid."
     exit 1
 fi
 
