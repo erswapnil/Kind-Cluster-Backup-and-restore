@@ -107,13 +107,18 @@ fi
 success "Repository cloned."
 
 REPO_DIR="${WORK_DIR}/repo"
+CLUSTER_DIR="${REPO_DIR}/${CLUSTER_NAME}"
 
 # Verify all expected artifact files are present
+if [[ ! -d "${CLUSTER_DIR}" ]]; then
+  error "Cluster folder '${CLUSTER_NAME}/' not found in repo. Available: $(ls -1 ${REPO_DIR} | grep -v ^\.)"
+fi
+success "Found cluster folder: ${CLUSTER_NAME}/"
 for f in "${SNAPSHOT_TAR}" "${CLUSTER_CONFIG_YAML}" "${DB_BLUEPRINTS_YAML}"; do
-  if [[ ! -f "${REPO_DIR}/${f}" ]]; then
-    error "Expected artifact '${f}' not found in cloned repo. Check the repo contents."
+  if [[ ! -f "${CLUSTER_DIR}/${f}" ]]; then
+    error "Expected artifact '${CLUSTER_NAME}/${f}' not found in repo."
   fi
-  success "Found artifact: ${f}"
+  success "Found: ${CLUSTER_NAME}/${f}"
 done
 
 # ─── PHASE 2: Restore ─────────────────────────────────────────────────────────
@@ -122,7 +127,7 @@ step "PHASE 2 — Restore CNPG kind cluster"
 # Step 1: Load the Docker image
 step "Step 1 — Load Docker image from snapshot"
 info "Loading ${SNAPSHOT_TAR} into Docker (this may take a moment)..."
-docker load -i "${REPO_DIR}/${SNAPSHOT_TAR}"
+docker load -i "${CLUSTER_DIR}/${SNAPSHOT_TAR}"
 success "Docker image loaded."
 
 # Step 2: Create kind-config.yaml
@@ -162,7 +167,7 @@ step "Step 5 — Restore ConfigMaps, Secrets, Services"
 info "Applying ${CLUSTER_CONFIG_YAML} (--validate=false to bypass schema conflicts)..."
 kubectl apply \
   --context "kind-${CLUSTER_NAME}" \
-  -f "${REPO_DIR}/${CLUSTER_CONFIG_YAML}" \
+  -f "${CLUSTER_DIR}/${CLUSTER_CONFIG_YAML}" \
   --validate=false || warn "Some conflict errors above are expected and safe to ignore."
 success "Standard configurations applied."
 
@@ -188,7 +193,7 @@ step "Step 7 — Apply CloudNativePG database blueprints"
 info "Applying ${DB_BLUEPRINTS_YAML}..."
 kubectl apply \
   --context "kind-${CLUSTER_NAME}" \
-  -f "${REPO_DIR}/${DB_BLUEPRINTS_YAML}"
+  -f "${CLUSTER_DIR}/${DB_BLUEPRINTS_YAML}"
 success "Database blueprints applied."
 
 # ─── PHASE 3: Health check ────────────────────────────────────────────────────
