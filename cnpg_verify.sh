@@ -23,11 +23,13 @@ error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 step()    { echo -e "\n${BOLD}━━━ $* ━━━${NC}"; }
 
 CLUSTER_NAME=""
+OPERATOR_NS=""   # auto-detected if not provided
 
 # ─── Parse CLI arguments ──────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cluster-name) CLUSTER_NAME="$2"; shift 2 ;;
+    --operator-ns)  OPERATOR_NS="$2";  shift 2 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \?//'
       exit 0 ;;
@@ -67,6 +69,22 @@ fi
 CONTEXT="kind-${CLUSTER_NAME}"
 info "Using kubectl context: ${CONTEXT}"
 
+# ─── Auto-detect operator namespace ───────────────────────────────────────────
+if [[ -z "${OPERATOR_NS}" ]]; then
+  for ns_candidate in "cnpg-system" "postgresql-operator-system" "pgd-operator-system"; do
+    pod_count=$(kubectl get pods -n "${ns_candidate}" --context "${CONTEXT}" \
+      --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "${pod_count}" -gt 0 ]]; then
+      OPERATOR_NS="${ns_candidate}"
+      break
+    fi
+  done
+  OPERATOR_NS="${OPERATOR_NS:-cnpg-system}"
+  info "Operator namespace auto-detected: ${OPERATOR_NS}"
+else
+  info "Operator namespace: ${OPERATOR_NS}  (from --operator-ns flag)"
+fi
+
 # ─── Verify kubectl can reach the cluster ─────────────────────────────────────
 step "Check 1 — Cluster connectivity"
 if ! kubectl cluster-info --context "${CONTEXT}" &>/dev/null; then
@@ -75,16 +93,16 @@ fi
 success "Cluster '${CLUSTER_NAME}' is reachable."
 
 # ─── Check operator pods ───────────────────────────────────────────────────────
-step "Check 2 — CNPG operator (cnpg-system namespace)"
+step "Check 2 — Operator pods (${OPERATOR_NS} namespace)"
 echo ""
-kubectl get pods --context "${CONTEXT}" -n cnpg-system
+kubectl get pods --context "${CONTEXT}" -n "${OPERATOR_NS}"
 echo ""
 
-OPERATOR_NOT_RUNNING=$(kubectl get pods --context "${CONTEXT}" -n cnpg-system \
+OPERATOR_NOT_RUNNING=$(kubectl get pods --context "${CONTEXT}" -n "${OPERATOR_NS}" \
   --no-headers 2>/dev/null | grep -v "Running" | grep -v "Completed" || true)
 
 if [[ -z "${OPERATOR_NOT_RUNNING}" ]]; then
-  success "CNPG operator pods are Running."
+  success "Operator pods are Running."
 else
   warn "Some operator pods are not in Running state — they may still be starting up."
 fi
@@ -160,6 +178,6 @@ success "Verification complete. Check output above for any warnings."
 echo ""
 echo "Useful commands:"
 echo "  kubectl get pods    --context ${CONTEXT} -n default"
-echo "  kubectl get pods    --context ${CONTEXT} -n cnpg-system"
+echo "  kubectl get pods    --context ${CONTEXT} -n ${OPERATOR_NS}"
 echo "  kubectl get clusters.postgresql.cnpg.io --context ${CONTEXT} -n default"
 echo ""
