@@ -167,7 +167,7 @@ else
   info "Operator namespace: ${OPERATOR_NS}  (from --operator-ns flag)"
 fi
 
-# ââ Operator version ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ââ Operator version âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 if [[ -z "${CNPG_VERSION}" ]]; then
   # Priority 1: cnpg-version.txt committed alongside artifacts
   if [[ -f "${CLUSTER_DIR}/cnpg-version.txt" ]]; then
@@ -340,7 +340,7 @@ for part in parts:
 " "${CLUSTER_DIR}/${CLUSTER_CONFIG_YAML}" \
       | kubectl apply --context "kind-${CLUSTER_NAME}" -f - --validate=false 2>/dev/null \
       && success "EDB pull secret applied to pgd-operator-system." \
-      || warn "Could not apply pull secret â operator may ImagePullBackOff."
+      || warn "Could not apply pull secret â eoperator may ImagePullBackOff."
     ;;
 
   *)
@@ -360,7 +360,7 @@ import sys, re
 with open(sys.argv[1]) as f:
     content = f.read()
 parts = re.split(r'(?m)^---[ \t]*$', content)
-ns_docs = [p.strip() for p in parts if re.search(r'^kind:\s+Namespace\s*$', p, re.MULTILINE)]
+ns_docs = [p.strip() for p in parts if re.search(r'^kind:\s+Namespace\s*$', p, re.MULTIL"NENE)]
 if ns_docs:
     print('---\n' + '\n---\n'.join(ns_docs))
 " "${CLUSTER_DIR}/${CLUSTER_CONFIG_YAML}" \
