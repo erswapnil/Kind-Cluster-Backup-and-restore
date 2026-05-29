@@ -4,10 +4,10 @@
 # Restore a kind CNPG cluster from a zip created by docker-cluster-backup.sh.
 #
 # Usage:
-#   ./docker-cluster-restore.sh <path-to-zip>
+#   ./docker-cluster-restore.sh
 #
-# Example:
-#   ./docker-cluster-restore.sh ~/Downloads/kind-backup-cnpg-20250528.zip
+# The script scans the current directory for kind-backup-*.zip files and
+# lets you pick one by number. No arguments needed.
 #
 # What it does:
 #   1. Installs missing prerequisites (kind, kubectl) via Homebrew
@@ -42,496 +42,162 @@ echo -e "${BOLD}â     Restores cluster from a shared zip file          â
 echo -e "${BOLD}ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ${NC}"
 echo ""
 
-# âââ Require zip argument âââââââââââââââââââââââââââââââââââââââââââââââââââââ
-if [[ $# -lt 1 ]]; then
-  error "Usage: ./docker-cluster-restore.sh <path-to-zip>
-Example: ./docker-cluster-restore.sh ~/Downloads/kind-backup-cnpg-20250528.zip"
+# âââ Find available backup zips âââââââââââââââââââââââââââââââââââââââââââââââ
+step "Available backup zips"
+
+mapfile -t ZIP_FILES < <(ls -t kind-backup-*.zip 2>/dev/null || true)
+
+if [[ ${#ZIP_FILES[@]} -eq 0 ]]; then
+  error "No backup zip files found in the current directory.
+Copy a kind-backup-*.zip here first, then re-run."
 fi
 
-ZIP_PATH="$1"
+if [[ ${#ZIP_FILES[@]} -eq 1 ]]; then
+  ZIP_PATH="${ZIP_FILES[0]}"
+  success "Found 1 backup: ${ZIP_PATH}  ($(du -sh "${ZIP_PATH}" | cut -f1))"
+else
+  echo ""
+  echo -e "  ${BOLD}#   BACKUP ZIP                                     SIZE${NC}"
+  echo "  ââââââââââââââââââââââââââââââââââââââââââââââââââââââ"
+  for i in "${!ZIP_FILES[@]}"; do
+    SIZE=$(du -sh "${ZIP_FILES[$i]}" | cut -f1)
+    printf "  %-3s %-45s %s\n" "$((i+1))" "${ZIP_FILES[$i]}" "${SIZE}"
+  done
+  echo ""
+  read -rp "Select backup to restore [1-${#ZIP_FILES[@]}]: " SELECTION
+  if ! [[ "${SELECTION}" =~ ^[0-9]+$ ]] || \
+     [[ "${SELECTION}" -lt 1 ]] || \
+     [[ "${SELECTION}" -gt ${#ZIP_FILES[@]} ]]; then
+    error "Invalid selection: ${SELECTION}"
+  fi
+  ZIP_PATH="${ZIP_FILES[$((SELECTION-1))]}"
+  success "Selected: ${ZIP_PATH}"
+fi
 
 if [[ ! -f "${ZIP_PATH}" ]]; then
   error "Zip file not found: ${ZIP_PATH}"
 fi
 
-success "Zip file found: ${ZIP_PATH}  ($(du -sh "${ZIP_PATH}" | cut -f1))"
+success "Zip file: ${ZIP_PATH}  ($(du -sh "${ZIP_PATH}" | cut -f1))"X[
+\ÙY[\Ü^H
+ÈÝ\XY\ÊH8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ø\ÙHÓÔTUÔÓßH[ÛË\Þ\Ý[HHÔTUÔÕTOHÛÛ[][]HÛÝY]]TÈÈTÒSÓÓPSHÓÈ\Ú[ÛÎÂÜÝÜ\Ü[[Ü\]Ü\Þ\Ý[HHÔTUÔÕTOHQÜÝÜ\ÈÜÛÝY]]TÈÈTÒSÓÓPSHÓ\Ú[ÛÎÂÙ[Ü\]Ü\Þ\Ý[HHÔTUÔÕTOHQÑ
+ÈÈTÒSÓÓPSHÑ
+È\Ú[ÛÎÂ
+HÔTUÔÕTOH[ÛÝÛÜ\]ÜÈTÒSÓÓPSHÜ\]Ü\Ú[ÛÎÂ\ØXÂÈ8¥ 8¥ XYÙ\[X[YÙ\\Ú[Û
+ÑÛJH8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ÑTÓPSQÑTÕTÒSÓHKMÈØYHY][X]Ú[ÈH[ÛÚÂYÖÈYÐPÒÕTÔÕPTKØÙ\[X[YÙ\]\Ú[ÛWNÈ[ØÛOI
+Ø]ÐPÒÕTÔÕPTKØÙ\[X[YÙ\]\Ú[ÛY	ÖÎÜXÙNIÊBYÖÈ[×ØÛ_HWNÈ[È[Ý\H]\ÈHXY[È	ÝÂÖÈ×ØÛ_H_WH	ÑTÓPSQÑTÕTÒSÓH×ØÛ_HÑTÓPSQÑTÕTÒSÓH×ØÛ_H[ÈÙ\[X[YÙ\\Ú[Û	ÐÑTÓPSQÑTÕTÒSÓH
+ÛHXÚÝ\
+HBBÈ8¥ 8¥ [ÝÈ\ÝÜ[È[\HY\[Û\Ý\[YH8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ XÚÈXÚÈYHHXÚÝ\Û\Ý\[YH\Î	ÐÓIÐÓTÕTÓSQ_IÓßHXY\\ÝÜH\ÈHY\[[YOÈ
+\ÜÈ[\ÈÙY\	ÉÐÓTÕTÓSQ_IÊNTÕÔWÓSQBYÖÈ[ÔTÕÔWÓSQ_H	ÔTÕÔWÓSQ_HOHÐÓTÕTÓSQ_HWNÈ[[ÈÛ\Ý\Ú[H\ÝÜY\Î	ÔTÕÔWÓSQ_HÓTÕTÓSQOHÔTÕÔWÓSQ_H[ÙB[È\Ú[ÈÜYÚ[[Û\Ý\[YN	ÐÓTÕTÓSQ_HBYÖÈ[ÐÓ×ÕTÒSÓHWNÈ[ÝXØÙ\ÜÈÕTÒSÓÓPSN	ÐÓ×ÕTÒSÓH
+XYÛH\
+H[ÙBÈÛË]\Ú[Û^\ÝÈ]\È[È8 %HÈ]XÝÛHHÛ\ÚÝ\Ø\ÕTÒSÓÓPSH[H[\\È[\K][\[ÈÈ]XÝÛHÛ\ÚÝ[XYÙK[ÈØY[ÈÛ\ÚÝÈ[ÜXÝ[XYÙHX[È
+YYYÛÙHÜ\Ú[Û]XÝ[ÛKÐQQÒSPQÑOI
+ØÚÙ\ØYZHÔÓTÒÕÕTHHÜ\ØYY[XYÙH]ÚÈ	ÞÜ[	IÈXYLHYJBYÖÈ[ÓÐQQÒSPQÑ_HWNÈ[[È[ÜXÝ[È[XYÙN	ÓÐQQÒSPQÑ_HÓ×ÕTÒSÓI
+ØÚÙ\[ÜXÝÓÐQQÒSPQÑ_HKYÜX]	ÞÞÜ[ÙH	Ë	HÛÛYËX[ß_^ÞÉß_O^ÞÉ_^ÞÈ_^ÞÙ[_IÈÙ]Û[Ü\ZH\Ú[ÛÜ\[ÑH	ÖÌNWJ×ÌNWJ×ÌNWJÉÈXYLHYJBBYÖÈ[ÐÓ×ÕTÒSÓHWNÈ[ÝXØÙ\ÜÈÕTÒSÓÓPSH]XÝYÛH[XYÙN	ÐÓ×ÕTÒSÓH[ÙBØ\ÛÝ[Ý]]ËY]XÝ	ÕTÒSÓÓPSHÛH[XYÙKXÚÈXY\[\Ü\]Ü\Ú[ÛX[X[H
+KË
+NÓ×ÕTÒSÓÖÈ^ÐÓ×ÕTÒSÓHWH	\ÜÜ\]Ü\Ú[Û\È\]Z\YBBÈ8¥ 8¥ 8¥ \YH\YXÝ[\È8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\\YZ[ÈXÚÝ\\YXÝÈÜ[ÔÓTÒÕÕTHÐÓTÕTÐÓÓQßHÑÐQTSßHÈÂYÖÈHYÙHWNÈ[\Ü^XÝY[HÝÝ[	
+\Ù[[YHÙHHBÝXØÙ\ÜÈÝ[	
+\Ù[[YHÙHH
+	
+H\ÚÙHÝ]YJJHÛBÓTÒÕÔÒVOI
+ØÈXÈÔÓTÒÕÕTHY	È	ÊBYÖÈÔÓTÒÕÔÒV_H[LWNÈ[\ÜÛË\Û\ÚÝ\\ÈÛH	ÔÓTÒÕÔÒV_H]\È8 %]ÛÚÜÈÛÜ\Ü[ÛÛ\]KB[ÈÛ\ÚÝÚ^N	
 
-# âââ Pre-flight: Homebrew âââââââââââââââââââââââââââââââââââââââââââââââââââââ
-step "Pre-flight â Check Homebrew"
-if ! command -v brew &>/dev/null; then
-  error "Homebrew is not installed. Install it first: https://brew.sh"
-fi
-success "Homebrew found: $(brew --version | head -1)"
+ÓTÒÕÔÒVHÈLÈL
+JHP8 %ÛÚÜÈÛÛÙÈ8¥ 8¥ 8¥ ÛÛ\HYÜH\ÝÜ[È8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ XÚÈXÚÈÛ\Ý\È\ÝÜH	ÐÓTÕTÓSQ_HXÚÈÜ\]Ü	ÓÔTUÔÕT_HÐÓ×ÕTÒSÓHXÚÈÜ\]Ü[Y\ÜXÙH	ÓÔTUÔÓßHXÚÈÛ\ÚÝÚ^H	
+H\ÚÔÓTÒÕÕTHÝ]YJHXÚÈXY\ØÙYYÚ]\ÝÜOÈÖKÛNÓÓTBÖÈÐÓÓT_H_ÓHWH	XÚÈXÜY	^]È8¥ 8¥ 8¥ Ý\NØYØÚÙ\[XYÙH8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\Ý\H8 %ØYØÚÙ\Û\ÚÝ[XYÙHÈÚXÚÈYÙH[XYHØYY]\[È\Ú[Û]XÝ[ÛXÝBÓTÒÕÒSPQÑWÕQÏHÐÓTÕTÓSQ_K\Û\ÚÝHYØÚÙ\[XYÙH[ÜXÝÔÓTÒÕÒSPQÑWÕQßH	Ù]Û[NÈ[ÝXØÙ\ÜÈØÚÙ\[XYÙH[XYHØYY
+ÛH\Ú[Û]XÝ[ÛÝ\
+K[ÙB[ÈØY[ÈÛË\Û\ÚÝ\[ÈØÚÙ\
+\ÈX^HZÙHH]ÈZ[]\ÊKØÚÙ\ØYZHÔÓTÒÕÕTHÝXØÙ\ÜÈØÚÙ\[XYÙHØYYBÈ8¥ 8¥ 8¥ Ý\Ü]HÚ[Û\Ý\ÛÛYÈ8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\Ý\8 %Ü]HÚ[Û\Ý\ÛÛYÈÒSÐÓÓQÏHÕÓÔ×ÑTKÚÚ[XÛÛYËX[[Ø]SÑÒÒSÐÓÓQßHÚ[Û\Ý\\U\Ú[ÛÚ[ZÎË[ËÝX[MÙ\ÎHÛNÛÛÛ\[BHÛNÛÜÙ\SÑÝXØÙ\ÜÈÚ[XÛÛYËX[[Ü][Ø\YHÜYÚ[[Û\Ý\YHY\[[X\ÙÛÜÙ\ËÙ]\È[H[K\[È8¥ 8¥ 8¥ Ý\ÎÜX]HÚ[Û\Ý\8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\Ý\È8 %ÜX]HÚ[Û\Ý\	ÉÐÓTÕTÓSQ_IÈYÚ[Ù]Û\Ý\ÈÙ]Û[Ü\\^ÐÓTÕTÓSQ_HÈ[Ø\Û\Ý\	ÉÐÓTÕTÓSQ_IÈ[XYH^\ÝË[][È]\ÝÚ[[]HÛ\Ý\K[[YHÐÓTÕTÓSQ_HBÚ[ÜX]HÛ\Ý\K[[YHÐÓTÕTÓSQ_HKXÛÛYÈÒÒSÐÓÓQßHÝXØÙ\ÜÈÚ[Û\Ý\	ÉÐÓTÕTÓSQ_IÈÜX]YÈ8¥ 8¥ 8¥ Ý\
+[Ý[Ü\]Ü8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\Ý\
+8 %[Ý[Ü\]ÜÐÓ×ÕTÒSÓH
+	ÓÔTUÔÕT_JHØ\ÙHÓÔTUÔÓßH[ÛË\Þ\Ý[HBÈÛÛ[][]HÛÝY]]TÈ8 %X[Y\Ý\ÈXXÛH]Z[XHÛÚ]XÓ×ÔSPTÑOH[X\ÙKIÐÓ×ÕTÒSÓKHÈKËKKH8¡¤[X\ÙKLKBÓ×ÓPSQTÕHÎËÜ]ËÚ]X\Ù\ÛÛ[ÛÛKØÛÝY]]K\ËØÛÝY]]K\ËÉÐÓ×ÔSPTÑ_KÜ[X\Ù\ËØÛËIÐÓ×ÕTÒSÓKX[[[È\Z[ÈÛÛ[][]HÓÈX[Y\Ý	ÐÓ×ÓPSQTÕHÝXXÝ\HKXÛÛ^Ú[IÐÓTÕTÓSQ_HK\Ù\\\ÚYHKYÜÙKXÛÛXÝÈYÐÓ×ÓPSQTÕHÝXØÙ\ÜÈÛÛ[][]HÓÈÜ\]Ü\YYÎÂÜÝÜ\Ü[[Ü\]Ü\Þ\Ý[HBÈQÜÝÜ\ÈÜÛÝY]]TÈ8 %Ü\]Ü[XYÙHZÙY[ÈHÛ\ÚÝÈ[Y\ÜXÙ\È[Ü\]Ü\Þ[Y[Ú[H\ÝÜYÛHÛXÛ\Ý\XÛÛYËX[[[Ý\
+K[ÈQÓÜ\]Ü\È[XYY[HÛ\Ý\Û\ÚÝ[ÈÜ\]Ü\Þ[Y[Ú[H\ÝÜYÛHÛXÛ\Ý\XÛÛYËX[[[Ý\
+KÎÂÙ[Ü\]Ü\Þ\Ý[HBÈ8¥ 8¥ QÑ
+È8 %YYÈHË\Ý\ÛÝÝ\8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ÈÑ\]Z\\ÈÙ\[X[YÙ\ÜÈÙ\YXØ]HX[YÙ[Y[ÈZ]\Ù\[X[YÙ\ÜÙ[Ü\]Ü\Þ\Ý[H[Y\ÜXÙ\È^\ÝÛH\ÚÈÚ[Û\Ý\ÛÈÙH]\Ý[Ý[ÝÜ\]ÜÈÛHZ\XXÈX[Y\ÝÂÈQÔH\Z[ÈHXÚÝ\PSSHXÚÝ\PSS[[È[BÈ[ÙXÜ]ËÛÛYÈX\ËÙ\XÙ\È]Ë]HÜ\]ÜÈYYÈÝ\
+NÙ\[X[YÙ\
+ÜX]\ÈÙ\[X[YÙ\[Y\ÜXÙH
+ÈÔÊB[È[Ý[[ÈÙ\[X[YÙ\	ÐÑTÓPSQÑTÕTÒSÓKÝXXÝ\HKXÛÛ^Ú[IÐÓTÕTÓSQ_HK][Y]OY[ÙHYÎËÙÚ]XÛÛKØÙ\[X[YÙ\ØÙ\[X[YÙ\Ü[X\Ù\ËÙÝÛØYÉÐÑTÓPSQÑTÕTÒSÓKØÙ\[X[YÙ\X[[[ÈØZ][ÈÜÙ\[X[YÙ\ÙXÛÚÈÙÈÈHXYH
+\ÈLÊKÝXXÝØZ]ÙKYÜXÛÛ][Û\XYHK\Ù[XÝÜ\ÝX\]\Ë[ËÚ[Ý[ÙOXÙ\[X[YÙ\K[[Y\ÜXÙHÙ\[X[YÙ\KXÛÛ^Ú[IÐÓTÕTÓSQ_HK][Y[Ý]NLÈÙ]Û[Ø\Ù\[X[YÙ\ÙÈÝ[HXYHY]8 %ÛÛ[Z[È[]Ø^KÝXØÙ\ÜÈÙ\[X[YÙ\	ÐÑTÓPSQÑTÕTÒSÓH[Ý[YÈÝ\
+ÑÜ\]ÜX[Y\Ý
+ÜX]\ÈÙ[Ü\]Ü\Þ\Ý[H[Y\ÜXÙH
+ÈÜ\]Ü\Þ[Y[
+BÑÓPSQTÕHÎËÙÙ][\\ÙY[ËÜÍË\ÙÜÍË\ÙIÐÓ×ÕTÒSÓKX[[[È\Z[ÈQÑ
+ÈÜ\]ÜÐÓ×ÕTÒSÓHX[Y\ÝÝXXÝ\HK\Ù\\\ÚYHKXÛÛ^Ú[IÐÓTÕTÓSQ_HYÔÑÓPSQTÕHØ\ÑÜ\]ÜX[Y\ÝYØ\[ÜÈ8 %ÚXÚÈÙÈ[ÝËÝXØÙ\ÜÈQÑ
+ÈÜ\]ÜX[Y\Ý\YYÈÝ\
+Î[XÝHQ[ÙXÜ][ÈÙ[Ü\]Ü\Þ\Ý[HÕÂÈHÜ\]ÜÛÛZ[\[XYÙH]\È[ØÚÙ\[\\ÙYÛÛH[YYÂÈ\ÈÙXÜ]Ü]Ú[[XYÙT[XÚÓÙYÜHÙH][Ù]ÈÝ\
+K[È[XÝ[ÈQ[ÙXÜ][ÈÙ[Ü\]Ü\Þ\Ý[K]ÛÈXÈ[\ÜÞ\ËBÚ]Ü[Þ\Ë\ÝÌWJH\ÈÛÛ[HXY
 
-# âââ Pre-flight: Docker âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-step "Pre-flight â Check Docker"
-if ! command -v docker &>/dev/null; then
-  warn "Docker not found."
-  warn "Install Docker Desktop from: https://docker.com/products/docker-desktop"
-  warn "Start Docker Desktop, wait for the whale icon to go solid, then re-run."
-  exit 1
-fi
-if ! docker info &>/dev/null 2>&1; then
-  warn "Docker is installed but the daemon is not running."
-  warn "Open Docker Desktop, wait for the whale icon to go solid, then re-run."
-  exit 1
-fi
-success "Docker is installed and running."
+B\ÈHKÜ]
+ÊÛJWKKVÈJ	ËÛÛ[
+BÜ\[\ÎY
+KÙX\Ú
+Û[Y\ÜXÙNÊÜÙ[Ü\]Ü\Þ\Ý[IË\
+H[KÙX\Ú
+Û[YNÊÙY\[\ÙXÜ]	Ë\
+H[KÙX\Ú
+×Ú[ÊÔÙXÜ]	Ë\KUSSSJJN[
+	ËKKIÊB[
+\Ý\
 
-# âââ Pre-flight: Install missing tools via Homebrew âââââââââââââââââââââââââââ
-step "Pre-flight â Install missing tools (kind, kubectl, unzip)"
+JBÐÓTÕTÐÓÓQßHÝXXÝ\HKXÛÛ^Ú[IÐÓTÕTÓSQ_HYHK][Y]OY[ÙHÙ]Û[	ÝXØÙ\ÜÈQ[ÙXÜ]\YYÈÙ[Ü\]Ü\Þ\Ý[KØ\ÛÝ[Ý\H[ÙXÜ]ÈÙ[Ü\]Ü\Þ\Ý[H8 %Ü\]ÜX^H[XYÙT[XÚÓÙÎÂ
+BØ\[ÛÝÛÜ\]Ü[Y\ÜXÙH	ÉÓÔTUÔÓßIÈ8 %ÚÚ\[ÈX[Y\Ý[Ý[Ø\Ü\]ÜÚ[H\YYÛHÛXÛ\Ý\XÛÛYËX[[[Ý\
+KÎÂ\ØXÂÈ8¥ 8¥ 8¥ Ý\
+N\HÝX\]\È\ÛÝ\Ù\È8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\Ý\
+H8 %\HÝX\]\ÈÛÛYÜÈ
+[Y\ÜXÙ\È8¡¤Ü\]Ü8¡¤\ÛÝ\Ù\ÊHÈ8¥ 8¥ \ÜÈNÜX]H[[Y\ÜXÙH\ÛÝ\Ù\È\Ý8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ÈH\ÚÚ[Û\Ý\\ÈÈ\Ù\[Y\ÜXÙ\Ë\ÛÝ\Ù\È[ÚYHH[Y\ÜXÙBÈZ[Ú][Y\ÜXÙ\ÈÝÝ[Y][Y\ÜXÙH\ÛÝY[ÜX]YY]ÈÙH^XÝ]\H[Y\ÜXÙHØXÝÛHHPSS[\H[H\Ý[È\ÜÈNÜX][È[[Y\ÜXÙH\ÛÝ\Ù\ÈÛHXÚÝ\]ÛÈXÈ[\ÜÞ\ËBÚ]Ü[Þ\Ë\ÝÌWJH\ÈÛÛ[HXY
 
-TOOLS=(kind kubectl)
-for tool in "${TOOLS[@]}"; do
-  if command -v "${tool}" &>/dev/null; then
-    success "${tool} already installed."
-  else
-    info "Installing ${tool} via Homebrew..."
-    brew install "${tool}"
-    success "${tool} installed."
-  fi
-done
+BÈÜ]][KYØÝ[Y[PSSÛ	ËKKIÈÙ\\]ÜÂ\ÈHKÜ]
+ÊÛJWKKVÈJ	ËÛÛ[
+B×ÙØÜÈH×BÜ\[\ÎÈX]Ú	ÚÚ[[Y\ÜXÙIÈ\ÈHÜ[][
+[[[Y
+HÙ^BYKÙX\Ú
+×Ú[ÊÓ[Y\ÜXÙWÊ	Ë\KUSSSJN×ÙØÜË\[
+\Ý\
 
-if ! command -v unzip &>/dev/null; then
-  info "Installing unzip..."
-  brew install unzip
-  success "unzip installed."
-else
-  success "unzip already available."
-fi
+JBY×ÙØÜÎ[
+	ËKKWÈ
+È	×KKWËÚ[×ÙØÜÊJBÐÓTÕTÐÓÓQßHÝXXÝ\HKXÛÛ^Ú[IÐÓTÕTÓSQ_HYHK][Y]OY[ÙHÙ]Û[	ÝXØÙ\ÜÈ[Y\ÜXÙ\ÈÜX]YØ\[Y\ÜXÙHÜX][ÛYØ\[ÜÈ
+X^HHÒÈY^H[XYH^\Ý
+KÈ8¥ 8¥ \ÜÈ\HH[Û\Ý\ÛÛYÈ
+[Y\ÜXÙ\ÈÝÈ^\Ý
+H8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ [È\ÜÈ\Z[È[Û\Ý\ÛÛYÝ\][ÛÝXXÝ\HKXÛÛ^Ú[IÐÓTÕTÓSQ_HYÐÓTÕTÐÓÓQßHK][Y]OY[ÙHØ\ÛÛYHÛÛXÝÈXÝH\H^XÝY[ØYHÈYÛÜKÝXØÙ\ÜÈÝX\]\ÈÛÛYÜÈ\YYÈ8¥ 8¥ 8¥ Ý\
+ÛX\ÚÜÝÙÈ[ØZ]ÜÜ\]Ü8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\Ý\
+8 %ÛX\ÚÜÝÙÈ[ØZ]Ü	ÓÔTUÔÕT_H[	ÓÔTUÔÓßHÝXXÝ[]HÙKXÛÛ^Ú[IÐÓTÕTÓSQ_H[ÓÔTUÔÓßHKX[KZYÛÜK[ÝYÝ[]YHÙ]Û[YBÝXØÙ\ÜÈÚÜÝÙÈÛX\Y[ÈØZ][ÈMHÈÜÜ\]Ü\Þ[Y[ÈÝ\ÛY\MBÈ[HÛÛÛ\[X[YÙ\\Þ[Y[[YH[[ZXØ[BÕÑTÖOI
+ÝXXÝÙ]\Þ[Y[[ÓÔTUÔÓßHKXÛÛ^Ú[IÐÓTÕTÓSQ_H[ÈÛÛ]IÞÜ[ÙH][\ÖÊ_^ËY]Y]K[Y_^È^Ù[IÈÙ]Û[Ü\ZHQHÛÛÛ\[X[YÙ\Ü\]ÜXYLHYJBYÖÈ[ÐÕÑTÖ_HWNÈ[ÝXXÝÛÝ]Ý]\È\Þ[Y[ÉÐÕÑTÖ_HKXÛÛ^Ú[IÐÓTÕTÓSQ_H[ÓÔTUÔÓßHK][Y[Ý]LNÈØ\Ü\]ÜÛÝ][Y[Ý]8 %ÚXÚÈ	ÚÝXXÝÙ]ÙÈ[	ÓÔTUÔÓßIË[ÙBØ\ÛÝ[Ý[ÛÛÛ\\Þ[Y[8 %ÚÚ\[ÈÛÝ]ÚXÚËØ\X[X[H\YNÝXXÝÙ]ÙÈKXÛÛ^Ú[IÐÓTÕTÓSQ_H[	ÓÔTUÔÓßHBÈ8¥ 8¥ ÜÑØZ]ÜÔÈÈHYÚ\Ý\YYÜH\Z[ÈY\[È8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ÈHÑÜ\]Ü]\ÝYÚ\Ý\]ÈÔÈY\Ý\[È\ÈYÙH\HÙÜÝ\ÈYÜH	ÜÙÜÝ\ËÙÎË[\\ÙY[ÉÈ^\ÝËÈÝXXÝ]\È	ÛÈX]Ú\ÈÜÚ[ÑÜÝ\È[Ý\
+ÈZ[ËYÖÈÓÔTUÔÓßHOHÙ[Ü\]Ü\Þ\Ý[HWNÈ[[ÈÑÛ\Ý\]XÝY8 %ØZ][ÈÜÑÔÈÈHYÚ\Ý\YÔÑPQSOI
 
-# âââ Unzip the backup âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-step "Unzipping backup"
+	
+]H
+É\ÊH
+ÈL
+JBÚ[HYNÈÂYÝXXÝÙ]ÜÙÜÝ\ËÙÎË[\\ÙY[ÈKXÛÛ^Ú[IÐÓTÕTÓSQ_H	Ù]Û[NÈ[ÝXØÙ\ÜÈÑÔÈ\HYÚ\Ý\Y8 %XYHÈ\HY\[ËXZÂBYÖÈ	
+]H
+É\ÊHYÝ	ÐÔÑPQS_HWNÈ[Ø\[YYÝ]ØZ][ÈÜÑÔÈ
+LÊKØ\HÑÜ\]ÜX^HÝ[HÝ\[ËZ[ÈÝ\
+È[]Ø^KXZÂB[ÈÑÔÈÝY]YÚ\Ý\Y8 %]Z[È[LËÛY\LÛBBÈ8¥ 8¥ 8¥ Ý\
+Î\H]X\ÙHY\[È8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\Ý\
+È8 %\H]X\ÙHY\[È
+	ÓÔTUÔÕT_JHÈÜÑÙ\[X[YÙ\\ÜÝY\È]\Ý^\ÝQÔHÑÜÝ\ËÝ\Ú\ÙHBÈÜÝ\ÈÝ^HÝXÚÈØZ][ÈÜÙ\YXØ]\ËHY\[È[HÝÈÛÛZ[ÂÈ\ÜÝY\È^ÜYHH\]YØØ[ØXÚÝ\Ú\H[H\ÝYÖÈÓÔTUÔÓßHOHÙ[Ü\]Ü\Þ\Ý[HWNÈ[[È\Z[ÈÙ\[X[YÙ\\ÜÝY\È[Ù\YXØ]\È\Ý
+Ñ\]Z\\ÈÊK]ÛÈXÈ[\ÜÞ\ËBÚ]Ü[Þ\Ë\ÝÌWJH\ÈÛÛ[HXY
 
-WORK_DIR="$(mktemp -d -t cnpg-local-restore-XXXXXX)"
-info "Working directory: ${WORK_DIR}"
-trap 'info "Cleaning up working directory..."; rm -rf "${WORK_DIR}"' EXIT
+B\ÈHKÜ]
+ÊÛJWKKVÈJ	ËÛÛ[
+BÙ\ÙØÜÈH×BÜ\[\ÎÚ[ÛHHKÙX\Ú
+×Ú[ÊÊÊÊIË\KUSSSJBYÚ[ÛH[Ú[ÛKÜÝ\
+JH[
+	Ò\ÜÝY\Ë	ÐÛ\Ý\\ÜÝY\Ë	ÐÙ\YXØ]IÊNÙ\ÙØÜË\[
+\Ý\
 
-unzip -q "${ZIP_PATH}" -d "${WORK_DIR}"
-success "Unzipped to: ${WORK_DIR}"
+JBYÙ\ÙØÜÎ[
+	ËKKWÈ
+È	×KKWËÚ[Ù\ÙØÜÊJBÑÐQTSßHÝXXÝ\HKXÛÛ^Ú[IÐÓTÕTÓSQ_HYHK][Y]OY[ÙHÙ]Û[	[ÈÙ\[X[YÙ\\ÜÝY\ËÐÙ\YXØ]\È\YYØ\\ÜÝY\\HYØ\[ÜÈ8 %X^HHÒÈYXÚÝ\Y]\ÈH\ÜÝY\^ÜBÝXXÝ\HKXÛÛ^Ú[IÐÓTÕTÓSQ_HYÑÐQTSßHØ\ÛÛYHY\[\ÜÈXÝHX^HH^XÝY8 %ÚXÚÈÙÝ]\È[ÝËÝXØÙ\ÜÈ]X\ÙHY\[È\YYÈ8¥ 8¥ 8¥ \ÙHÎX[ÚXÚÈ8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ Ý\X[ÚXÚÈ8 %ØZ][ÈÜ]X\ÙHÙÈ[ÈØZ][È\ÈÈZ[]\ÈÜÙÈÈXXÚ[[ÈÝ]K[È\Ý][YH\ÝÜHX^H[ÜÝÜTÔS[XYÙ\È8 %\ÈØ[ZÙH
+KLLZ[K\[YYYYHPQSOI
 
-# Find the backup subfolder (the unzipped directory inside)
-BACKUP_SUBDIR=$(find "${WORK_DIR}" -mindepth 1 -maxdepth 1 -type d | head -1)
-if [[ -z "${BACKUP_SUBDIR}" ]]; then
-  error "Could not find backup folder inside the zip. Is this the right file?"
-fi
-info "Backup folder: $(basename "${BACKUP_SUBDIR}")"
-
-# Define artifact paths here so they're available for namespace detection below
-SNAPSHOT_TAR="${BACKUP_SUBDIR}/cnpg-snapshot.tar"
-CLUSTER_CONFIG="${BACKUP_SUBDIR}/cnp-cluster-config.yaml"
-DB_BLUEPRINTS="${BACKUP_SUBDIR}/cnpg-db-blueprints.yaml"
-
-# âââ Read cluster metadata ââââââââââââââââââââââââââââââââââââââââââââââââââââ
-step "Reading cluster metadata from zip"
-
-CLUSTER_NAME_FILE="${BACKUP_SUBDIR}/cluster-name.txt"
-CNPG_VERSION_FILE="${BACKUP_SUBDIR}/cnpg-version.txt"
-OPERATOR_NS_FILE="${BACKUP_SUBDIR}/operator-namespace.txt"
-
-if [[ ! -f "${CLUSTER_NAME_FILE}" ]]; then
-  error "cluster-name.txt not found in zip. Was this created by docker-cluster-backup.sh?"
-fi
-if [[ ! -f "${CNPG_VERSION_FILE}" ]]; then
-  error "cnpg-version.txt not found in zip. Was this created by docker-cluster-backup.sh?"
-fi
-
-CLUSTER_NAME=$(cat "${CLUSTER_NAME_FILE}" | tr -d '[:space:]')
-CNPG_VERSION=$(cat "${CNPG_VERSION_FILE}" | tr -d '[:space:]')
-
-# ââ Operator namespace ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-OPERATOR_NS=""
-
-# Priority 1: operator-namespace.txt (written by newer local_backup.sh)
-if [[ -f "${OPERATOR_NS_FILE}" ]]; then
-  OPERATOR_NS=$(cat "${OPERATOR_NS_FILE}" | tr -d '[:space:]')
-  info "Operator namespace: ${OPERATOR_NS}  (from operator-namespace.txt)"
-fi
-
-# Priority 2: scan the exported YAML files for known namespace names
-# Handles older zips created before operator-namespace.txt was added
-if [[ -z "${OPERATOR_NS}" ]]; then
-  CLUSTER_CONFIG="${BACKUP_SUBDIR}/cnp-cluster-config.yaml"
-  DB_BLUEPRINTS="${BACKUP_SUBDIR}/cnpg-db-blueprints.yaml"
-  for ns_candidate in "pgd-operator-system" "postgresql-operator-system" "cnpg-system"; do
-    if grep -q "namespace: ${ns_candidate}" "${CLUSTER_CONFIG}" "${DB_BLUEPRINTS}" 2>/dev/null; then
-      OPERATOR_NS="${ns_candidate}"
-      info "Operator namespace: ${OPERATOR_NS}  (detected from YAML files in zip)"
-      break
-    fi
-  done
-fi
-
-# Priority 3: fallback to cnpg-system
-if [[ -z "${OPERATOR_NS}" ]]; then
-  OPERATOR_NS="cnpg-system"
-  warn "Could not detect operator namespace â defaulting to cnpg-system."
-fi
-
-success "Cluster name (from backup): ${CLUSTER_NAME}"
-success "Operator namespace:         ${OPERATOR_NS}"
-
-# ââ Determine operator type label (used in display + step headers) ââââââââââââ
-case "${OPERATOR_NS}" in
-  "cnpg-system")                OPERATOR_TYPE="Community CloudNativePG" ;  VERSION_LABEL="CNPG version" ;;
-  "postgresql-operator-system") OPERATOR_TYPE="EDB Postgres for CloudNativePG" ; VERSION_LABEL="CNP version"  ;;
-  "pgd-operator-system")        OPERATOR_TYPE="EDB PGD4K"                ; VERSION_LABEL="PGD4K version" ;;
-  *)                            OPERATOR_TYPE="Unknown operator"          ; VERSION_LABEL="Operator version" ;;
-esac
-
-# ââ Read cert-manager version (PGD only) ââââââââââââââââââââââââââââââââââââââ
-CERT_MANAGER_VERSION="v1.16.2"   # safe default matching the runbook
-if [[ -f "${BACKUP_SUBDIR}/cert-manager-version.txt" ]]; then
-  _cm=$(cat "${BACKUP_SUBDIR}/cert-manager-version.txt" | tr -d '[:space:]')
-  if [[ -n "${_cm}" ]]; then
-    # Ensure it has a leading 'v'
-    [[ "${_cm}" =~ ^v ]] && CERT_MANAGER_VERSION="${_cm}" || CERT_MANAGER_VERSION="v${_cm}"
-    info "cert-manager version: ${CERT_MANAGER_VERSION}  (from backup)"
-  fi
-fi
-
-# ââ Allow restoring under a different cluster name ââââââââââââââââââââââââââââ
-echo ""
-echo -e "  The backup cluster name is: ${BOLD}${CLUSTER_NAME}${NC}"
-read -rp "  Restore as a different name? (press Enter to keep '${CLUSTER_NAME}'): " RESTORE_NAME
-if [[ -n "${RESTORE_NAME}" && "${RESTORE_NAME}" != "${CLUSTER_NAME}" ]]; then
-  info "Cluster will be restored as: ${RESTORE_NAME}"
-  CLUSTER_NAME="${RESTORE_NAME}"
-else
-  info "Using original cluster name: ${CLUSTER_NAME}"
-fi
-
-if [[ -n "${CNPG_VERSION}" ]]; then
-  success "${VERSION_LABEL}:  ${CNPG_VERSION}  (read from zip)"
-else
-  # cnpg-version.txt exists but is blank â try to detect from the snapshot tar
-  warn "${VERSION_LABEL} file in zip is empty. Attempting to detect from snapshot image..."
-
-  info "Loading snapshot to inspect image labels (needed once for version detection)..."
-  LOADED_IMAGE=$(docker load -i "${SNAPSHOT_TAR}" 2>&1 | grep "Loaded image" | awk '{print $NF}' | head -1 || true)
-
-  if [[ -n "${LOADED_IMAGE}" ]]; then
-    info "Inspecting image: ${LOADED_IMAGE}"
-    CNPG_VERSION=$(docker inspect "${LOADED_IMAGE}" \
-      --format '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}}{{"\n"}}{{end}}' \
-      2>/dev/null | grep -i "version" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-  fi
-
-  if [[ -n "${CNPG_VERSION}" ]]; then
-    success "${VERSION_LABEL} detected from image: ${CNPG_VERSION}"
-  else
-    warn "Could not auto-detect ${VERSION_LABEL} from image."
-    echo ""
-    read -rp "Enter operator version manually (e.g. 2.0.0): " CNPG_VERSION
-    [[ -z "${CNPG_VERSION}" ]] && error "Operator version is required."
-  fi
-fi
-
-# âââ Verify artifact files ââââââââââââââââââââââââââââââââââââââââââââââââââââ
-step "Verifying backup artifacts"
-
-for f in "${SNAPSHOT_TAR}" "${CLUSTER_CONFIG}" "${DB_BLUEPRINTS}"; do
-  if [[ ! -f "${f}" ]]; then
-    error "Expected file not found: $(basename "${f}")"
-  fi
-  success "Found: $(basename "${f}")  ($(du -sh "${f}" | cut -f1))"
-done
-
-SNAPSHOT_SIZE=$(wc -c < "${SNAPSHOT_TAR}" | tr -d ' ')
-if [[ "${SNAPSHOT_SIZE}" -lt 10000 ]]; then
-  error "cnpg-snapshot.tar is only ${SNAPSHOT_SIZE} bytes â it looks corrupt or incomplete."
-fi
-info "Snapshot size: $(( SNAPSHOT_SIZE / 1024 / 1024 )) MB â looks good."
-
-# âââ Confirm before restoring âââââââââââââââââââââââââââââââââââââââââââââââââ
-echo ""
-echo "  Cluster to restore : ${CLUSTER_NAME}"
-echo "  Operator           : ${OPERATOR_TYPE} v${CNPG_VERSION}"
-echo "  Operator namespace : ${OPERATOR_NS}"
-echo "  Snapshot size      : $(du -sh "${SNAPSHOT_TAR}" | cut -f1)"
-echo ""
-read -rp "Proceed with restore? [Y/n]: " CONFIRM
-[[ "${CONFIRM}" =~ ^[Nn] ]] && echo "Aborted." && exit 0
-
-# âââ Step 1: Load Docker image ââââââââââââââââââââââââââââââââââââââââââââââââ
-step "Step 1 â Load Docker snapshot image"
-# Check if we already loaded it during version detection above
-SNAPSHOT_IMAGE_TAG="${CLUSTER_NAME}-snapshot:v1"
-if docker image inspect "${SNAPSHOT_IMAGE_TAG}" &>/dev/null 2>&1; then
-  success "Docker image already loaded (from version detection step)."
-else
-  info "Loading cnpg-snapshot.tar into Docker (this may take a few minutes)..."
-  docker load -i "${SNAPSHOT_TAR}"
-  success "Docker image loaded."
-fi
-
-# âââ Step 2: Write kind cluster config âââââââââââââââââââââââââââââââââââââââ
-step "Step 2 â Write kind cluster config"
-KIND_CONFIG="${WORK_DIR}/kind-config.yaml"
-cat <<EOF > "${KIND_CONFIG}"
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-  - role: worker
-EOF
-success "kind-config.yaml written."
-warn "If the original cluster had a different number of workers, edit this file and re-run."
-
-# âââ Step 3: Create kind cluster âââââââââââââââââââââââââââââââââââââââââââââ
-step "Step 3 â Create kind cluster '${CLUSTER_NAME}'"
-if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
-  warn "Cluster '${CLUSTER_NAME}' already exists. Deleting it first..."
-  kind delete cluster --name "${CLUSTER_NAME}"
-fi
-kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}"
-success "kind cluster '${CLUSTER_NAME}' created."
-
-# âââ Step 4: Install operator ââââââââââââââââââââââââââââââââââââââââââââââââ
-step "Step 4 â Install operator v${CNPG_VERSION} (${OPERATOR_TYPE})"
-case "${OPERATOR_NS}" in
-  "cnpg-system")
-    # Community CloudNativePG â manifest is publicly available on GitHub
-    CNPG_RELEASE="release-${CNPG_VERSION%.*}"   # e.g. 1.29.1 â release-1.29
-    CNPG_MANIFEST="https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/${CNPG_RELEASE}/releases/cnpg-${CNPG_VERSION}.yaml"
-    info "Applying community CNPG manifest: ${CNPG_MANIFEST}"
-    kubectl apply \
-      --context "kind-${CLUSTER_NAME}" \
-      --server-side --force-conflicts \
-      -f "${CNPG_MANIFEST}"
-    success "Community CNPG operator applied."
-    ;;
-
-  "postgresql-operator-system")
-    # EDB Postgres for CloudNativePG â operator image baked into the snapshot.
-    # Namespaces and operator deployment will be restored from cnp-cluster-config.yaml in Step 5.
-    info "EDB CNP operator is embedded in the cluster snapshot."
-    info "Operator deployment will be restored from cnp-cluster-config.yaml in Step 5."
-    ;;
-
-  "pgd-operator-system")
-    # ââ EDB PGD4K â Needs a 3-step bootstrap âââââââââââââââââââââââââââââââââ
-    # PGD requires cert-manager for TLS certificate management.
-    # Neither cert-manager nor pgd-operator-system namespaces exist on a fresh
-    # kind cluster, so we must install both operators from their public manifests
-    # BEFORE applying the backup YAML.  The backup YAML then fills in the
-    # pull secrets, config maps, services etc. that the operators need.
-
-    # Step 4a: cert-manager (creates cert-manager namespace + CRDs)
-    info "Installing cert-manager ${CERT_MANAGER_VERSION}..."
-    kubectl apply \
-      --context "kind-${CLUSTER_NAME}" \
-      --validate=false \
-      -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
-
-    info "Waiting for cert-manager webhook pods to be Ready (up to 90 s)..."
-    kubectl wait pod \
-      --for=condition=ready \
-      --selector app.kubernetes.io/instance=cert-manager \
-      --namespace cert-manager \
-      --context "kind-${CLUSTER_NAME}" \
-      --timeout=90s \
-      2>/dev/null || warn "cert-manager pods not fully Ready yet â continuing anyway."
-    success "cert-manager ${CERT_MANAGER_VERSION} installed."
-
-    # Step 4b: PGD operator manifest (creates pgd-operator-system namespace + operator deployment)
-    PGD_MANIFEST="https://get.enterprisedb.io/pg4k-pgd/pg4k-pgd-${CNPG_VERSION}.yaml"
-    info "Applying EDB PGD4K operator v${CNPG_VERSION} manifest..."
-    kubectl apply \
-      --server-side \
-      --context "kind-${CLUSTER_NAME}" \
-      -f "${PGD_MANIFEST}" \
-      || warn "PGD operator manifest had warnings â check pods below."
-    success "EDB PGD4K operator manifest applied."
-
-    # Step 4c: Inject the EDB pull secret into pgd-operator-system NOW
-    # The operator container image lives in docker.enterprisedb.com and needs
-    # this secret or it will ImagePullBackOff before we even get to Step 5.
-    info "Injecting EDB pull secret into pgd-operator-system..."
-    python3 -c "
-import sys, re
-with open(sys.argv[1]) as f:
-    content = f.read()
-parts = re.split(r'(?m)^---[ \t]*$', content)
-for part in parts:
-    if (re.search(r'namespace:\s+pgd-operator-system', part) and
-        re.search(r'name:\s+edb-pull-secret', part) and
-        re.search(r'^kind:\s+Secret', part, re.MULTILINE)):
-        print('---')
-        print(part.strip())
-" "${CLUSTER_CONFIG}" \
-      | kubectl apply --context "kind-${CLUSTER_NAME}" -f - --validate=false 2>/dev/null \
-      && success "EDB pull secret applied to pgd-operator-system." \
-      || warn "Could not apply pull secret to pgd-operator-system â operator may ImagePullBackOff."
-    ;;
-
-  *)
-    warn "Unknown operator namespace '${OPERATOR_NS}' â skipping manifest install."
-    warn "Operator will be applied from cnp-cluster-config.yaml in Step 5."
-    ;;
-esac
-
-# âââ Step 5: Apply Kubernetes resources ââââââââââââââââââââââââââââââââââââââ
-step "Step 5 â Apply Kubernetes configs (Namespaces â Operator â Resources)"
-
-# ââ Pass 1: Create all Namespace resources first ââââââââââââââââââââââââââââââ
-# A fresh kind cluster has no user namespaces.  Resources inside a namespace
-# fail with "namespaces not found" if that namespace hasn't been created yet.
-# We extract every Namespace object from the YAML and apply them first.
-info "Pass 1: Creating all Namespace resources from backup..."
-python3 -c "
-import sys, re
-
-with open(sys.argv[1]) as f:
-    content = f.read()
-
-# Split multi-document YAML on '---' separators
-parts = re.split(r'(?m)^---[ \t]*$', content)
-
-ns_docs = []
-for part in parts:
-    # Match 'kind: Namespace' as a top-level (unindented) key
-    if re.search(r'^kind:\s+Namespace\s*$', part, re.MULTILINE):
-        ns_docs.append(part.strip())
-
-if ns_docs:
-    print('---\n' + '\n---\n'.join(ns_docs))
-" "${CLUSTER_CONFIG}" \
-  | kubectl apply --context "kind-${CLUSTER_NAME}" -f - --validate=false 2>/dev/null \
-  && success "Namespaces created." \
-  || warn "Namespace creation had warnings (may be OK if they already exist)."
-
-# ââ Pass 2: Apply the full cluster config (namespaces now exist) ââââââââââââââ
-info "Pass 2: Applying full cluster configuration..."
-kubectl apply \
-  --context "kind-${CLUSTER_NAME}" \
-  -f "${CLUSTER_CONFIG}" \
-  --validate=false || warn "Some conflicts above are expected and safe to ignore."
-success "Kubernetes configs applied."
-
-# âââ Step 6: Clear ghost pods and wait for operator ââââââââââââââââââââââââââ
-step "Step 6 â Clear ghost pods and wait for ${OPERATOR_TYPE} in ${OPERATOR_NS}"
-kubectl delete pod \
-  --context "kind-${CLUSTER_NAME}" \
-  -n "${OPERATOR_NS}" --all --ignore-not-found=true 2>/dev/null || true
-success "Ghost pods cleared."
-
-info "Waiting 15 s for operator deployment to start..."
-sleep 15
-
-# Find the controller-manager deployment name dynamically
-CTRL_DEPLOY=$(kubectl get deployment -n "${OPERATOR_NS}" \
-  --context "kind-${CLUSTER_NAME}" \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-  | grep -i -E "controller-manager|operator" | head -1 || true)
-
-if [[ -n "${CTRL_DEPLOY}" ]]; then
-  kubectl rollout status "deployment/${CTRL_DEPLOY}" \
-    --context "kind-${CLUSTER_NAME}" \
-    -n "${OPERATOR_NS}" \
-    --timeout=180s \
-    || warn "Operator rollout timeout â check 'kubectl get pods -n ${OPERATOR_NS}'."
-else
-  warn "Could not find controller deployment â skipping rollout check."
-  warn "Manually verify: kubectl get pods --context kind-${CLUSTER_NAME} -n ${OPERATOR_NS}"
-fi
-
-# ââ For PGD: wait for CRDs to be registered before applying blueprints ââââââââ
-# The PGD operator must register its CRDs after starting up.
-# If we apply pgdgroups before 'pgdgroups.pgd.k8s.enterprisedb.io' exists,
-# kubectl returns 'no matches for kind "PGDGroup"' and Step 7 fails.
-if [[ "${OPERATOR_NS}" == "pgd-operator-system" ]]; then
-  info "PGD cluster detected â waiting for PGD CRDs to be registered..."
-  CRD_DEADLINE=$(( $(date +%s) + 120 ))
-  while true; do
-    if kubectl get crd pgdgroups.pgd.k8s.enterprisedb.io \
-       --context "kind-${CLUSTER_NAME}" &>/dev/null 2>&1; then
-      success "PGD CRDs are registered â ready to apply blueprints."
-      break
-    fi
-    if [[ $(date +%s) -gt ${CRD_DEADLINE} ]]; then
-      warn "Timed out waiting for PGD CRDs (120 s)."
-      warn "The PGD operator may still be starting. Trying Step 7 anyway..."
-      break
-    fi
-    info "PGD CRDs not yet registered â retrying in 10 s..."
-    sleep 10
-  done
-fi
-
-# âââ Step 7: Apply database blueprints âââââââââââââââââââââââââââââââââââââââ
-step "Step 7 â Apply database blueprints (${OPERATOR_TYPE})"
-
-# For PGD: cert-manager Issuers must exist BEFORE PGDGroups, otherwise the
-# groups stay stuck waiting for certificates.  The blueprints file now contains
-# Issuers exported by the updated local_backup.sh.  Apply them first.
-if [[ "${OPERATOR_NS}" == "pgd-operator-system" ]]; then
-  info "Applying cert-manager Issuers and Certificates first (PGD requires TLS)..."
-  python3 -c "
-import sys, re
-with open(sys.argv[1]) as f:
-    content = f.read()
-parts = re.split(r'(?m)^---[ \t]*$', content)
-cert_docs = []
-for part in parts:
-    kind_m = re.search(r'^kind:\s+(\S+)', part, re.MULTILINE)
-    if kind_m and kind_m.group(1) in ('Issuer', 'ClusterIssuer', 'Certificate'):
-        cert_docs.append(part.strip())
-if cert_docs:
-    print('---\n' + '\n---\n'.join(cert_docs))
-" "${DB_BLUEPRINTS}" \
-    | kubectl apply --context "kind-${CLUSTER_NAME}" -f - --validate=false 2>/dev/null \
-    && info "cert-manager Issuers/Certificates applied." \
-    || warn "Issuer apply had warnings â may be OK if backup predates the Issuer export."
-fi
-
-kubectl apply \
-  --context "kind-${CLUSTER_NAME}" \
-  -f "${DB_BLUEPRINTS}" \
-  || warn "Some blueprint errors above may be expected â check pod status below."
-success "Database blueprints applied."
-
-# âââ Phase 3: Health check ââââââââââââââââââââââââââââââââââââââââââââââââââââ
-step "Health check â Waiting for database pods"
-info "Waiting up to 3 minutes for pods to reach Running state..."
-info "(First-time restore may pull PostgreSQL images â this can take 5-10 min. Re-run if needed.)"
-
-DEADLINE=$(( $(date +%s) + 180 ))
-while true; do
-  NOT_READY=$(kubectl get pods \
-    --context "kind-${CLUSTER_NAME}" \
-    -n default --no-headers 2>/dev/null \
-    | grep -v "Running" | grep -v "Completed" || true)
-
-  if [[ -z "${NOT_READY}" ]]; then
-    success "All pods in 'default' namespace are Running."
-    break
-  fi
-
-  if [[ $(date +%s) -gt ${DEADLINE} ]]; then
-    warn "Timeout â pods may still be pulling images. Re-run in a few minutes."
-    break
-  fi
-
-  info "Pods not yet ready â retrying in 10 s..."
-  sleep 10
-done
-
-# âââ Final state ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-echo ""
-echo -e "${BOLD}âââ Final cluster state âââ${NC}"
-kubectl get pods --context "kind-${CLUSTER_NAME}" -n default
-echo ""
-kubectl get pods --context "kind-${CLUSTER_NAME}" -n "${OPERATOR_NS}"
-echo ""
-
-# âââ Done âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-echo ""
-echo -e "${BOLD}âââ Restore complete âââ${NC}"
-success "Cluster '${CLUSTER_NAME}' is up and running."
-echo ""
-echo -e "  ${BOLD}Useful commands:${NC}"
-echo "  kubectl get pods    --context kind-${CLUSTER_NAME} -n default"
-echo "  kubectl get pods    --context kind-${CLUSTER_NAME} -n ${OPERATOR_NS}"
-echo "  kubectl get clusters.postgresql.cnpg.io --context kind-${CLUSTER_NAME} -n default"
-echo ""
+	
+]H
+É\ÊH
+ÈN
+JBÚ[HYNÈÂÕÔPQOI
+ÝXXÝÙ]ÙÈKXÛÛ^Ú[IÐÓTÕTÓSQ_H[Y][K[ËZXY\ÈÙ]Û[Ü\][[ÈÜ\]ÛÛ\]YYJBYÖÈ^ÓÕÔPQ_HWNÈ[ÝXØÙ\ÜÈ[ÙÈ[	ÙY][	È[Y\ÜXÙH\H[[ËXZÂBYÖÈ	
+]H
+É\ÊHYÝ	ÑPQS_HWNÈ[Ø\[Y[Ý]8 %ÙÈX^HÝ[H[[È[XYÙ\ËK\[[H]ÈZ[]\ËXZÂB[ÈÙÈÝY]XYH8 %]Z[È[LËÛY\LÛBÈ8¥ 8¥ 8¥ [[Ý]H8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ XÚÈXÚÈYHÐÓx¥ x¥ x¥ H[[Û\Ý\Ý]H8¥ x¥ x¥ IÓßHÝXXÝÙ]ÙÈKXÛÛ^Ú[IÐÓTÕTÓSQ_H[Y][XÚÈÝXXÝÙ]ÙÈKXÛÛ^Ú[IÐÓTÕTÓSQ_H[ÓÔTUÔÓßHXÚÈÈ8¥ 8¥ 8¥ ÛH8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ XÚÈXÚÈYHÐÓx¥ x¥ x¥ H\ÝÜHÛÛ\]H8¥ x¥ x¥ IÓßHÝXØÙ\ÜÈÛ\Ý\	ÉÐÓTÕTÓSQ_IÈ\È\[[[ËXÚÈXÚÈYH	ÐÓU\ÙY[ÛÛ[X[ÎÓßHXÚÈÝXXÝÙ]ÙÈKXÛÛ^Ú[IÐÓTÕTÓSQ_H[Y][XÚÈÝXXÝÙ]ÙÈKXÛÛ^Ú[IÐÓTÕTÓSQ_H[	ÓÔTUÔÓßHXÚÈÝXXÝÙ]Û\Ý\ËÜÝÜ\Ü[ÛË[ÈKXÛÛ^Ú[IÐÓTÕTÓSQ_H[Y][XÚÈ
