@@ -168,9 +168,6 @@ else
   echo ""
   echo -e "  ${BOLD}Next step â run the restore with your zip file:${NC}"
   echo ""
-  echo "  ./docker-cluster-restore.sh ~/Downloads/kind-backup-<cluster>-<date>.zip"
-  echo ""
-  echo "  Example:"
-  echo "  ./docker-cluster-restore.sh ~/Downloads/kind-backup-cnpg-20250528.zip"
+  echo "  ./docker-cluster-restore.sh"
   echo ""
 fi
