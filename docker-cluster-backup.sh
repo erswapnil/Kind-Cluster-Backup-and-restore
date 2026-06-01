@@ -324,12 +324,14 @@ REPO_DIR="${WORK_DIR}/repo"
 # Use token in URL — never echoed to screen
 REPO_URL="https://${LOGIN}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${GITHUB_REPO}.git"
 
-info "Cloning repo (shallow clone for speed)..."
-git clone --depth 1 "${REPO_URL}" "${REPO_DIR}" 2>&1 | sed "s/${GITHUB_TOKEN}/****/g"
+info "Cloning repo (shallow clone, skipping existing LFS objects for speed)..."
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 "${REPO_URL}" "${REPO_DIR}" 2>&1 | sed "s/${GITHUB_TOKEN}/****/g"
 
 git -C "${REPO_DIR}" config user.name "${LOGIN}"
 git -C "${REPO_DIR}" config user.email "${LOGIN}@users.noreply.github.com"
 git -C "${REPO_DIR}" config http.postBuffer 1073741824
+git -C "${REPO_DIR}" config http.lowSpeedLimit 1000
+git -C "${REPO_DIR}" config http.lowSpeedTime 600
 
 # Ensure .gitattributes tracks *.tar.gz via LFS
 git -C "${REPO_DIR}" lfs install 2>/dev/null || true
