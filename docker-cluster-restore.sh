@@ -406,17 +406,14 @@ case "${OPERATOR_NS}" in
 
   "postgresql-operator-system")
     # ── EDB Postgres for CloudNativePG (CNP) ─────────────────────────────────
-    # Install EDB CNP operator from public manifest first so the namespace and
-    # CRDs exist before cnp-cluster-config.yaml is applied in Step 8.
-    CNP_RELEASE="v${CNPG_VERSION}"
-    CNP_MANIFEST="https://get.enterprisedb.io/cnp/postgresql-operator-${CNPG_VERSION}.yaml"
-    info "Installing EDB CNP operator v${CNPG_VERSION} from public manifest..."
-    if curl -sf --max-time 10 "${CNP_MANIFEST}" -o /dev/null 2>/dev/null; then
-      kubectl apply -f "${CNP_MANIFEST}" --context "${CONTEXT}" 2>/dev/null || true
-      success "EDB CNP operator manifest applied."
-    else
-      warn "Public manifest not found at ${CNP_MANIFEST} — operator will be restored from cnp-cluster-config.yaml in Step 8."
-    fi
+    # The EDB CNP operator image is baked into the Docker snapshot (containerd cache).
+    # We create the namespace first so that when cnp-cluster-config.yaml is applied
+    # in Step 8, the operator deployment can be created successfully.
+    info "Creating postgresql-operator-system namespace..."
+    kubectl create namespace postgresql-operator-system \
+      --context "${CONTEXT}" 2>/dev/null || true
+    success "Namespace postgresql-operator-system ready."
+    info "EDB CNP operator deployment will be restored from cnp-cluster-config.yaml in Step 8."
     ;;
 
   "pgd-operator-system")
