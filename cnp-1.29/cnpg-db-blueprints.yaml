@@ -1,0 +1,231 @@
+---
+apiVersion: v1
+items:
+- apiVersion: postgresql.k8s.enterprisedb.io/v1
+  kind: Cluster
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"postgresql.k8s.enterprisedb.io/v1","kind":"Cluster","metadata":{"annotations":{},"name":"cluster-example","namespace":"default"},"spec":{"instances":3,"storage":{"size":"1Gi"}}}
+    creationTimestamp: "2026-06-01T10:34:25Z"
+    generation: 1
+    name: cluster-example
+    namespace: default
+    resourceVersion: "1293"
+    uid: 62be18db-28e1-46e7-8c0b-5672c7500dc1
+  spec:
+    affinity:
+      podAntiAffinityType: preferred
+    bootstrap:
+      initdb:
+        database: app
+        encoding: UTF8
+        localeCType: C
+        localeCollate: C
+        owner: app
+    enablePDB: true
+    enableSuperuserAccess: false
+    failoverDelay: 0
+    imageName: docker.enterprisedb.com/k8s/postgresql:18.3-standard-ubi9
+    instances: 3
+    logLevel: info
+    maxSyncReplicas: 0
+    minSyncReplicas: 0
+    monitoring:
+      customQueriesConfigMap:
+      - key: queries
+        name: postgresql-operator-default-monitoring
+      disableDefaultQueries: false
+      enablePodMonitor: false
+    postgresGID: 26
+    postgresUID: 26
+    postgresql:
+      parameters:
+        archive_mode: "on"
+        archive_timeout: 5min
+        dynamic_shared_memory_type: posix
+        full_page_writes: "on"
+        log_destination: csvlog
+        log_directory: /controller/log
+        log_filename: postgres
+        log_rotation_age: "0"
+        log_rotation_size: "0"
+        log_truncate_on_rotation: "false"
+        logging_collector: "on"
+        max_parallel_workers: "32"
+        max_replication_slots: "32"
+        max_worker_processes: "32"
+        shared_memory_type: mmap
+        shared_preload_libraries: ""
+        ssl_max_protocol_version: TLSv1.3
+        ssl_min_protocol_version: TLSv1.3
+        wal_keep_size: 512MB
+        wal_level: logical
+        wal_log_hints: "on"
+        wal_receiver_timeout: 5s
+        wal_sender_timeout: 5s
+      syncReplicaElectionConstraint:
+        enabled: false
+    primaryUpdateMethod: restart
+    primaryUpdateStrategy: unsupervised
+    probes:
+      liveness:
+        isolationCheck:
+          connectionTimeout: 1000
+          enabled: true
+          requestTimeout: 1000
+    replicationSlots:
+      highAvailability:
+        enabled: true
+        slotPrefix: _cnp_
+      synchronizeReplicas:
+        enabled: true
+      updateInterval: 30
+    resources: {}
+    smartShutdownTimeout: 180
+    startDelay: 3600
+    stopDelay: 1800
+    storage:
+      resizeInUseVolumes: true
+      size: 1Gi
+    switchoverDelay: 3600
+  status:
+    availableArchitectures:
+    - goArch: amd64
+      hash: db74eca49198d46fc3aafc3394fa58c20ac5e2713830729d54798e95753e4ab9
+    - goArch: arm64
+      hash: 40e8a3998f23859ef66fe2e2deef565e33ad49e6d61be36a279c035a76c4f95b
+    - goArch: ppc64le
+      hash: f7e4ad59f47e0950a9339ddee68cae9617f7d65054527fb126cf7a700ebef0a1
+    - goArch: s390x
+      hash: 560295c9dd0a9f69dc7c84d0836c559f3cf849a5304c01b65d42a17946b96de3
+    certificates:
+      clientCASecret: cluster-example-ca
+      expirations:
+        cluster-example-ca: 2026-08-30 10:29:25 +0000 UTC
+        cluster-example-replication: 2026-08-30 10:29:25 +0000 UTC
+        cluster-example-server: 2026-08-30 10:29:25 +0000 UTC
+      replicationTLSSecret: cluster-example-replication
+      serverAltDNSNames:
+      - cluster-example-rw
+      - cluster-example-rw.default
+      - cluster-example-rw.default.svc
+      - cluster-example-rw.default.svc.cluster.local
+      - cluster-example-r
+      - cluster-example-r.default
+      - cluster-example-r.default.svc
+      - cluster-example-r.default.svc.cluster.local
+      - cluster-example-ro
+      - cluster-example-ro.default
+      - cluster-example-ro.default.svc
+      - cluster-example-ro.default.svc.cluster.local
+      serverCASecret: cluster-example-ca
+      serverTLSSecret: cluster-example-server
+    cloudNativePostgresqlCommitHash: 681e8e1c7
+    cloudNativePostgresqlOperatorHash: 40e8a3998f23859ef66fe2e2deef565e33ad49e6d61be36a279c035a76c4f95b
+    conditions:
+    - lastTransitionTime: "2026-06-01T10:35:12Z"
+      message: A single, unique system ID was found across reporting instances.
+      reason: Unique
+      status: "True"
+      type: ConsistentSystemID
+    - lastTransitionTime: "2026-06-01T10:35:59Z"
+      message: Cluster is Ready
+      reason: ClusterIsReady
+      status: "True"
+      type: Ready
+    - lastTransitionTime: "2026-06-01T10:35:12Z"
+      message: Continuous archiving is working
+      reason: ContinuousArchivingSuccess
+      status: "True"
+      type: ContinuousArchiving
+    - lastTransitionTime: "2026-06-01T10:35:59Z"
+      message: velero addon is disabled
+      reason: Disabled
+      status: "False"
+      type: k8s.enterprisedb.io/velero
+    - lastTransitionTime: "2026-06-01T10:35:59Z"
+      message: external-backup-adapter addon is disabled
+      reason: Disabled
+      status: "False"
+      type: k8s.enterprisedb.io/externalBackupAdapter
+    - lastTransitionTime: "2026-06-01T10:35:59Z"
+      message: external-backup-adapter-cluster addon is disabled
+      reason: Disabled
+      status: "False"
+      type: k8s.enterprisedb.io/externalBackupAdapterCluster
+    - lastTransitionTime: "2026-06-01T10:35:59Z"
+      message: kasten addon is disabled
+      reason: Disabled
+      status: "False"
+      type: k8s.enterprisedb.io/kasten
+    configMapResourceVersion:
+      metrics:
+        postgresql-operator-default-monitoring: "851"
+    currentPrimary: cluster-example-1
+    currentPrimaryTimestamp: "2026-06-01T10:35:12.448601Z"
+    healthyPVC:
+    - cluster-example-1
+    - cluster-example-2
+    - cluster-example-3
+    image: docker.enterprisedb.com/k8s/postgresql:18.3-standard-ubi9
+    instanceNames:
+    - cluster-example-1
+    - cluster-example-2
+    - cluster-example-3
+    instances: 3
+    instancesReportedState:
+      cluster-example-1:
+        ip: 10.244.0.8
+        isPrimary: true
+        timeLineID: 1
+      cluster-example-2:
+        ip: 10.244.0.11
+        isPrimary: false
+        timeLineID: 1
+      cluster-example-3:
+        ip: 10.244.0.14
+        isPrimary: false
+        timeLineID: 1
+    instancesStatus:
+      healthy:
+      - cluster-example-1
+      - cluster-example-2
+      - cluster-example-3
+    latestGeneratedNode: 3
+    licenseStatus:
+      licenseStatus: Not enforced
+      repositoryAccess: false
+      valid: false
+    managedRolesStatus: {}
+    pgDataImageInfo:
+      image: docker.enterprisedb.com/k8s/postgresql:18.3-standard-ubi9
+      majorVersion: 18
+    phase: Cluster in healthy state
+    poolerIntegrations:
+      pgBouncerIntegration: {}
+    pvcCount: 3
+    readService: cluster-example-r
+    readyInstances: 3
+    secretsResourceVersion:
+      applicationSecretVersion: "817"
+      clientCaSecretVersion: "814"
+      replicationSecretVersion: "816"
+      serverCaSecretVersion: "814"
+      serverSecretVersion: "815"
+    switchReplicaClusterStatus: {}
+    systemID: "7646373682367279130"
+    targetPrimary: cluster-example-1
+    targetPrimaryTimestamp: "2026-06-01T10:34:25.667727Z"
+    timelineID: 1
+    topology:
+      instances:
+        cluster-example-1: {}
+        cluster-example-2: {}
+        cluster-example-3: {}
+      nodesUsed: 1
+      successfullyExtracted: true
+    writeService: cluster-example-rw
+kind: List
+metadata:
+  resourceVersion: ""
