@@ -198,21 +198,52 @@ GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 "${GIT_REPO}" "${WORK_DIR}/repo"
 success "Repo cloned."
 
 info "Downloading snapshot file via LFS (${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz — may take several minutes)..."
-git -C "${WORK_DIR}/repo" config lfs.fetchrecentrefsdays 0
-git -C "${WORK_DIR}/repo" config http.lowSpeedLimit 1000
-git -C "${WORK_DIR}/repo" config http.lowSpeedTime 600
 
-LFS_OK=false
-for lfs_attempt in 1 2 3; do
-  if git -C "${WORK_DIR}/repo" lfs pull --include="${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz" 2>&1; then
-    LFS_OK=true
-    break
-  fi
-  warn "LFS download attempt ${lfs_attempt}/3 failed. Retrying in 10s..."
-  sleep 10
-done
-[[ "${LFS_OK}" == "true" ]] || error "Failed to download snapshot after 3 attempts. Check your network connection."
-success "Snapshot downloaded."
+POINTER_FILE="${WORK_DIR}/repo/${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz"
+SNAPSHOT_DEST="${WORK_DIR}/snapshot.tar.gz"
+
+# Read OID and size from LFS pointer file (clone with SKIP_SMUDGE leaves pointer files)
+LFS_OID=$(grep "^oid sha256:" "${POINTER_FILE}" 2>/dev/null | awk '{print $2}' | cut -d: -f2 || true)
+LFS_SIZE=$(grep "^size " "${POINTER_FILE}" 2>/dev/null | awk '{print $2}' || true)
+
+if [[ -z "${LFS_OID}" ]]; then
+  # Pointer not found — file may already be real content (previously downloaded)
+  info "File appears to already be downloaded (not an LFS pointer)."
+  cp "${POINTER_FILE}" "${SNAPSHOT_DEST}"
+else
+  info "LFS object: sha256:${LFS_OID} (${LFS_SIZE} bytes)"
+  LFS_OK=false
+  for lfs_attempt in 1 2 3; do
+    info "Getting fresh download URL from GitHub LFS API (attempt ${lfs_attempt}/3)..."
+    BATCH_JSON="{\"operation\":\"download\",\"transfer\":[\"basic\"],\"objects\":[{\"oid\":\"${LFS_OID}\",\"size\":${LFS_SIZE}}]}"
+    DOWNLOAD_URL=$(curl -sf \
+      -H "Accept: application/vnd.git-lfs+json" \
+      -H "Content-Type: application/vnd.git-lfs+json" \
+      -d "${BATCH_JSON}" \
+      "https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git/info/lfs/objects/batch" \
+      | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['objects'][0]['actions']['download']['href'])" 2>/dev/null || true)
+
+    if [[ -z "${DOWNLOAD_URL}" ]]; then
+      warn "Could not get download URL (attempt ${lfs_attempt}/3). Retrying in 10s..."
+      sleep 10
+      continue
+    fi
+
+    info "Downloading snapshot with curl (supports resume)..."
+    if curl -L --max-time 600 --retry 3 --retry-delay 10 --retry-connrefused \
+       -C - -o "${SNAPSHOT_DEST}" "${DOWNLOAD_URL}" 2>&1; then
+      LFS_OK=true
+      break
+    fi
+    warn "Download attempt ${lfs_attempt}/3 failed. Retrying with fresh URL in 10s..."
+    sleep 10
+  done
+  [[ "${LFS_OK}" == "true" ]] || error "Failed to download snapshot after 3 attempts. Check your network connection."
+fi
+
+# Replace the LFS pointer with the actual downloaded file
+cp "${SNAPSHOT_DEST}" "${POINTER_FILE}"
+success "Snapshot downloaded: $(du -sh "${POINTER_FILE}" | cut -f1)"
 
 BACKUP_SUBDIR="${WORK_DIR}/repo/${CLUSTER_FOLDER}"
 if [[ ! -d "${BACKUP_SUBDIR}" ]]; then
