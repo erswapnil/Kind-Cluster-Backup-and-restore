@@ -360,8 +360,23 @@ git -C "${REPO_DIR}" commit \
   -m "backup: ${CLUSTER_NAME} (${OPERATOR_TYPE} v${CNPG_VERSION}) $(date +%Y-%m-%d)" \
   2>/dev/null || warn "Nothing new to commit — backup files unchanged since last upload."
 
-info "Pushing to GitHub — LFS uploads the snapshot tar separately (may take several minutes for large clusters)..."
+info "Uploading LFS objects to GitHub (snapshot tar — may take several minutes)..."
+LFS_OK=false
+for lfs_attempt in 1 2 3; do
+  if git -C "${REPO_DIR}" lfs push origin main 2>&1 | sed "s/${GITHUB_TOKEN}/****/g"; then
+    LFS_OK=true
+    break
+  fi
+  warn "LFS push attempt ${lfs_attempt}/3 failed. Retrying in 10s..."
+  sleep 10
+done
+
+info "Pushing refs to GitHub (updating repo index)..."
+# Disable LFS pre-push hook so this step only updates refs (LFS already done above)
+HOOK_FILE="${REPO_DIR}/.git/hooks/pre-push"
+[[ -f "${HOOK_FILE}" ]] && chmod -x "${HOOK_FILE}"
 git -C "${REPO_DIR}" push origin main 2>&1 | sed "s/${GITHUB_TOKEN}/****/g"
+[[ -f "${HOOK_FILE}" ]] && chmod +x "${HOOK_FILE}"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 TAR_SIZE=$(du -sh "${WORK_DIR}/cnpg-snapshot.tar.gz" | cut -f1)
