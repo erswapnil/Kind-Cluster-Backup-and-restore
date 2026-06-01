@@ -83,13 +83,25 @@ GITHUB_USER="${GITHUB_USER:-erswapnil}"
 read -rp "GitHub repo name [Kind-Cluster-Backup-and-restore]: " GITHUB_REPO
 GITHUB_REPO="${GITHUB_REPO:-Kind-Cluster-Backup-and-restore}"
 
+# Use GITHUB_TOKEN if set — raises rate limit from 60/hr to 5000/hr
+# Set it with: export GITHUB_TOKEN=ghp_your_token
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  GH_AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"
+  info "Using GitHub token for API calls (5000 req/hr limit)."
+else
+  GH_AUTH_HEADER="Accept: application/vnd.github+json"
+  info "No GITHUB_TOKEN set — using unauthenticated API (60 req/hr limit)."
+  info "To avoid rate limits: export GITHUB_TOKEN=ghp_your_token"
+fi
+
 echo ""
 info "Verifying repo is accessible..."
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Accept: application/vnd.github+json" \
+  -H "${GH_AUTH_HEADER}" \
   "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}")
 if [[ "${HTTP_CODE}" != "200" ]]; then
-  error "Repo '${GITHUB_USER}/${GITHUB_REPO}' not found or not public (HTTP ${HTTP_CODE})."
+  error "Repo '${GITHUB_USER}/${GITHUB_REPO}' not found or not public (HTTP ${HTTP_CODE}). If rate limited (403), set GITHUB_TOKEN env var or wait 1 hour."
 fi
 success "Repo ${GITHUB_USER}/${GITHUB_REPO} is accessible."
 
@@ -99,6 +111,7 @@ step "Step 2 · Available clusters in GitHub repo"
 info "Fetching cluster folder list..."
 CONTENTS=$(curl -s \
   -H "Accept: application/vnd.github+json" \
+  -H "${GH_AUTH_HEADER}" \
   "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/")
 
 CLUSTER_LIST=$(echo "${CONTENTS}" | python3 -c "
@@ -129,6 +142,7 @@ for i in "${!CLUSTERS[@]}"; do
   FOLDER="${CLUSTERS[$i]}"
   FILES=$(curl -s \
     -H "Accept: application/vnd.github+json" \
+    -H "${GH_AUTH_HEADER}" \
     "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${FOLDER}" \
     | python3 -c "
 import sys, json
@@ -246,9 +260,9 @@ PYEOF
       continue
     fi
 
-    info "Downloading snapshot with curl (supports resume on retry)..."
-    if curl -L --max-time 600 --retry 2 --retry-delay 10 \
-       -C - -o "${SNAPSHOT_DEST}" "${DOWNLOAD_URL}"; then
+    info "Downloading snapshot with curl (max 60 min — pre-signed URL valid for 1 hour)..."
+    if curl -L --max-time 3600 \
+       -o "${SNAPSHOT_DEST}" "${DOWNLOAD_URL}"; then
       LFS_OK=true
       break
     fi
