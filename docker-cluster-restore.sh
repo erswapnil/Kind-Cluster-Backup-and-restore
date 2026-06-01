@@ -455,15 +455,29 @@ EOF
 success "kind-config.yaml written."
 warn "If the original cluster had a different number of workers, edit kind-config.yaml and re-run."
 
-# Patch snapshot image — remove stale machine-specific kubelet config so kubeadm
-# regenerates it with the correct IP on this machine (avoids IP mismatch errors).
+# Patch snapshot image — remove stale machine-specific configs and reset
+# systemd state so the container initializes cleanly on this host.
 info "Patching snapshot image to remove stale machine-specific configs..."
 PATCHED_IMAGE="${SNAPSHOT_IMAGE_TAG}-patched"
 PATCH_CTR=$(docker create "${SNAPSHOT_IMAGE_TAG}" sleep 1 2>/dev/null)
 docker start "${PATCH_CTR}" &>/dev/null
+
+# Remove stale kubelet config (has old machine IP)
 docker exec "${PATCH_CTR}" rm -f \
   /etc/kubernetes/kubelet.conf \
   /var/lib/kubelet/config.yaml 2>/dev/null || true
+
+# Reset machine-id so systemd initializes fresh (critical for cross-machine restore)
+docker exec "${PATCH_CTR}" sh -c "echo -n > /etc/machine-id" 2>/dev/null || true
+docker exec "${PATCH_CTR}" sh -c "echo -n > /var/lib/dbus/machine-id" 2>/dev/null || true
+
+# Clear systemd journal (stale logs from original machine can block startup)
+docker exec "${PATCH_CTR}" rm -rf /var/log/journal/ 2>/dev/null || true
+docker exec "${PATCH_CTR}" mkdir -p /var/log/journal/ 2>/dev/null || true
+
+# Clear any stale network/runtime state from original host
+docker exec "${PATCH_CTR}" rm -f /run/machine-id 2>/dev/null || true
+
 docker stop "${PATCH_CTR}" &>/dev/null
 docker commit "${PATCH_CTR}" "${PATCHED_IMAGE}" &>/dev/null
 docker rm "${PATCH_CTR}" &>/dev/null
