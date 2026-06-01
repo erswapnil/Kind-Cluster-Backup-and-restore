@@ -377,13 +377,25 @@ GO="${GO:-Y}"
 
 # ── Step 5: Load Docker image ─────────────────────────────────────────────────
 step "Step 5 · Load Docker snapshot image"
+
+# The snapshot tar contains the image tagged with the ORIGINAL cluster name.
+# We load it and capture the actual tag, then re-tag if the cluster was renamed.
+ORIG_CLUSTER_NAME=$(cat "${BACKUP_SUBDIR}/cluster-name.txt" 2>/dev/null | tr -d '[:space:]' || echo "${CLUSTER_NAME}")
+ORIG_SNAPSHOT_TAG="${ORIG_CLUSTER_NAME}-snapshot:v1"
 SNAPSHOT_IMAGE_TAG="${CLUSTER_NAME}-snapshot:v1"
-if docker image inspect "${SNAPSHOT_IMAGE_TAG}" &>/dev/null 2>&1; then
-  success "Docker image already loaded (from version detection step)."
+
+if docker image inspect "${ORIG_SNAPSHOT_TAG}" &>/dev/null 2>&1; then
+  success "Docker image already loaded: ${ORIG_SNAPSHOT_TAG}"
 else
   info "Loading cnpg-snapshot.tar.gz into Docker (decompressing + loading, may take a few minutes)..."
-  gzip -dc "${SNAPSHOT_TAR}" | docker load
-  success "Docker image loaded."
+  LOADED_TAG=$(gzip -dc "${SNAPSHOT_TAR}" | docker load 2>&1 | grep "Loaded image" | awk '{print $NF}' | head -1 || true)
+  success "Docker image loaded: ${LOADED_TAG:-${ORIG_SNAPSHOT_TAG}}"
+fi
+
+# Re-tag with new cluster name if renamed
+if [[ "${CLUSTER_NAME}" != "${ORIG_CLUSTER_NAME}" ]]; then
+  info "Re-tagging image for renamed cluster: ${ORIG_SNAPSHOT_TAG} → ${SNAPSHOT_IMAGE_TAG}"
+  docker tag "${ORIG_SNAPSHOT_TAG}" "${SNAPSHOT_IMAGE_TAG}" 2>/dev/null || true
 fi
 
 # ── Step 6: Create kind cluster ───────────────────────────────────────────────
@@ -399,7 +411,7 @@ EOF
 success "kind-config.yaml written."
 warn "If the original cluster had a different number of workers, edit kind-config.yaml and re-run."
 
-kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}"
+kind create cluster --name "${CLUSTER_NAME}" --image "${SNAPSHOT_IMAGE_TAG}" --config "${KIND_CONFIG}"
 CONTEXT="kind-${CLUSTER_NAME}"
 success "kind cluster '${CLUSTER_NAME}' created."
 
