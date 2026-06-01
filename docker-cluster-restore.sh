@@ -293,16 +293,12 @@ success "Cluster name  : ${CLUSTER_NAME}"
 success "Operator      : ${OPERATOR_TYPE}"
 success "Op namespace  : ${OPERATOR_NS}"
 
-# Allow restoring under a different cluster name
+# Cluster name is fixed — renaming is not supported because TLS certificates
+# and kubeconfig files inside the snapshot are bound to the original hostname.
 echo ""
-echo -e "  The backup cluster name is: ${BOLD}${CLUSTER_NAME}${NC}"
-read -rp "  Restore as a different name? (press Enter to keep '${CLUSTER_NAME}'): " RESTORE_NAME
-if [[ -n "${RESTORE_NAME}" && "${RESTORE_NAME}" != "${CLUSTER_NAME}" ]]; then
-  info "Cluster will be restored as: ${RESTORE_NAME}"
-  CLUSTER_NAME="${RESTORE_NAME}"
-else
-  info "Using cluster name: ${CLUSTER_NAME}"
-fi
+echo -e "  Cluster will be restored as: ${BOLD}${CLUSTER_NAME}${NC}"
+warn "Renaming is not supported — the snapshot certificates are bound to '${CLUSTER_NAME}'."
+info "Using cluster name: ${CLUSTER_NAME}"
 
 # Handle operator version
 if [[ -n "${CNPG_VERSION}" ]]; then
