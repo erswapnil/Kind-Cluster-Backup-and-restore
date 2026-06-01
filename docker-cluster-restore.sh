@@ -201,7 +201,17 @@ info "Downloading snapshot file via LFS (${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz 
 git -C "${WORK_DIR}/repo" config lfs.fetchrecentrefsdays 0
 git -C "${WORK_DIR}/repo" config http.lowSpeedLimit 1000
 git -C "${WORK_DIR}/repo" config http.lowSpeedTime 600
-git -C "${WORK_DIR}/repo" lfs pull --include="${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz"
+
+LFS_OK=false
+for lfs_attempt in 1 2 3; do
+  if git -C "${WORK_DIR}/repo" lfs pull --include="${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz" 2>&1; then
+    LFS_OK=true
+    break
+  fi
+  warn "LFS download attempt ${lfs_attempt}/3 failed. Retrying in 10s..."
+  sleep 10
+done
+[[ "${LFS_OK}" == "true" ]] || error "Failed to download snapshot after 3 attempts. Check your network connection."
 success "Snapshot downloaded."
 
 BACKUP_SUBDIR="${WORK_DIR}/repo/${CLUSTER_FOLDER}"
