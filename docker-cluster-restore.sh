@@ -148,7 +148,7 @@ try:
             except:
                 pass
     op_label = {'cnpg-system': 'CNPG', 'postgresql-operator-system': 'EDB-CNP', 'pgd-operator-system': 'PGD4K'}.get(op, op or '?')
-    tar = 'yes' if 'cnpg-snapshot.tar' in names else 'missing'
+    tar = 'yes' if 'cnpg-snapshot.tar.gz' in names else 'missing'
     cfg = 'yes (' + op_label + ')' if 'cnp-cluster-config.yaml' in names else 'missing'
     bp  = 'yes' if 'cnpg-db-blueprints.yaml' in names else 'missing'
     print(tar + '|' + cfg + '|' + bp)
@@ -173,7 +173,7 @@ done
 echo ""
 
 if [[ ${#VALID_CLUSTERS[@]} -eq 0 ]]; then
-  error "No valid cluster backups found (cnpg-snapshot.tar missing in all folders)."
+  error "No valid cluster backups found (cnpg-snapshot.tar.gz missing in all folders)."
 fi
 
 while true; do
@@ -203,7 +203,7 @@ if [[ ! -d "${BACKUP_SUBDIR}" ]]; then
 fi
 
 # Artifact file paths
-SNAPSHOT_TAR="${BACKUP_SUBDIR}/cnpg-snapshot.tar"
+SNAPSHOT_TAR="${BACKUP_SUBDIR}/cnpg-snapshot.tar.gz"
 CLUSTER_CONFIG="${BACKUP_SUBDIR}/cnp-cluster-config.yaml"
 DB_BLUEPRINTS="${BACKUP_SUBDIR}/cnpg-db-blueprints.yaml"
 
@@ -293,7 +293,7 @@ if [[ -n "${CNPG_VERSION}" ]]; then
 else
   warn "${VERSION_LABEL} not found in backup metadata. Attempting detection from snapshot image..."
   info "Loading snapshot to inspect image labels..."
-  LOADED_IMAGE=$(docker load -i "${SNAPSHOT_TAR}" 2>&1 | grep "Loaded image" | awk '{print $NF}' | head -1 || true)
+  LOADED_IMAGE=$(zcat "${SNAPSHOT_TAR}" | docker load 2>&1 | grep "Loaded image" | awk '{print $NF}' | head -1 || true)
   if [[ -n "${LOADED_IMAGE}" ]]; then
     CNPG_VERSION=$(docker inspect "${LOADED_IMAGE}" \
       --format '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}}{{"\n"}}{{end}}' \
@@ -320,7 +320,7 @@ done
 
 SNAPSHOT_SIZE=$(wc -c < "${SNAPSHOT_TAR}" | tr -d ' ')
 if [[ "${SNAPSHOT_SIZE}" -lt 10000 ]]; then
-  error "cnpg-snapshot.tar is only ${SNAPSHOT_SIZE} bytes — looks corrupt or a bare LFS pointer (git-lfs may not have run)."
+  error "cnpg-snapshot.tar.gz is only ${SNAPSHOT_SIZE} bytes — looks corrupt or a bare LFS pointer (git-lfs may not have run)."
 fi
 info "Snapshot size: $(( SNAPSHOT_SIZE / 1024 / 1024 )) MB — looks good."
 
@@ -364,8 +364,8 @@ SNAPSHOT_IMAGE_TAG="${CLUSTER_NAME}-snapshot:v1"
 if docker image inspect "${SNAPSHOT_IMAGE_TAG}" &>/dev/null 2>&1; then
   success "Docker image already loaded (from version detection step)."
 else
-  info "Loading cnpg-snapshot.tar into Docker (this may take a few minutes)..."
-  docker load -i "${SNAPSHOT_TAR}"
+  info "Loading cnpg-snapshot.tar.gz into Docker (decompressing + loading, may take a few minutes)..."
+  zcat "${SNAPSHOT_TAR}" | docker load
   success "Docker image loaded."
 fi
 
