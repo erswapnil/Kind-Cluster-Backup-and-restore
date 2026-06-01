@@ -211,17 +211,34 @@ if [[ -z "${LFS_OID}" ]]; then
   info "File appears to already be downloaded (not an LFS pointer)."
   cp "${POINTER_FILE}" "${SNAPSHOT_DEST}"
 else
-  info "LFS object: sha256:${LFS_OID} (${LFS_SIZE} bytes)"
+  info "LFS object: sha256:${LFS_OID} size:${LFS_SIZE}"
   LFS_OK=false
+  BATCH_REQ="${WORK_DIR}/lfs_batch.json"
+  BATCH_RESP="${WORK_DIR}/lfs_resp.json"
+  GET_URL_PY="${WORK_DIR}/get_url.py"
+
+  # Write python helper script (avoids quote nesting in bash 3.2)
+  cat > "${GET_URL_PY}" << 'PYEOF'
+import sys, json
+d = json.load(sys.stdin)
+print(d["objects"][0]["actions"]["download"]["href"])
+PYEOF
+
   for lfs_attempt in 1 2 3; do
     info "Getting fresh download URL from GitHub LFS API (attempt ${lfs_attempt}/3)..."
-    BATCH_JSON="{\"operation\":\"download\",\"transfer\":[\"basic\"],\"objects\":[{\"oid\":\"${LFS_OID}\",\"size\":${LFS_SIZE}}]}"
-    DOWNLOAD_URL=$(curl -sf \
+
+    # Write batch request JSON to file (avoids escaped quotes in bash)
+    printf '{"operation":"download","transfer":["basic"],"objects":[{"oid":"%s","size":%s}]}' \
+      "${LFS_OID}" "${LFS_SIZE}" > "${BATCH_REQ}"
+
+    curl -sf \
       -H "Accept: application/vnd.git-lfs+json" \
       -H "Content-Type: application/vnd.git-lfs+json" \
-      -d "${BATCH_JSON}" \
-      "https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git/info/lfs/objects/batch" \
-      | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['objects'][0]['actions']['download']['href'])" 2>/dev/null || true)
+      -d "@${BATCH_REQ}" \
+      -o "${BATCH_RESP}" \
+      "https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git/info/lfs/objects/batch" || true
+
+    DOWNLOAD_URL=$(python3 "${GET_URL_PY}" < "${BATCH_RESP}" 2>/dev/null || true)
 
     if [[ -z "${DOWNLOAD_URL}" ]]; then
       warn "Could not get download URL (attempt ${lfs_attempt}/3). Retrying in 10s..."
@@ -229,9 +246,9 @@ else
       continue
     fi
 
-    info "Downloading snapshot with curl (supports resume)..."
-    if curl -L --max-time 600 --retry 3 --retry-delay 10 --retry-connrefused \
-       -C - -o "${SNAPSHOT_DEST}" "${DOWNLOAD_URL}" 2>&1; then
+    info "Downloading snapshot with curl (supports resume on retry)..."
+    if curl -L --max-time 600 --retry 2 --retry-delay 10 \
+       -C - -o "${SNAPSHOT_DEST}" "${DOWNLOAD_URL}"; then
       LFS_OK=true
       break
     fi
