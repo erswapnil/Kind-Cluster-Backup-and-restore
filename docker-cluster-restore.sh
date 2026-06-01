@@ -406,11 +406,17 @@ case "${OPERATOR_NS}" in
 
   "postgresql-operator-system")
     # ── EDB Postgres for CloudNativePG (CNP) ─────────────────────────────────
-    # The EDB CNP operator container image is baked into the docker commit snapshot.
-    # The operator namespace (postgresql-operator-system) and its deployment are
-    # embedded in cnp-cluster-config.yaml and will be restored in Step 8.
-    info "EDB CNP operator is embedded in the cluster snapshot."
-    info "Operator deployment will be restored from cnp-cluster-config.yaml in Step 8."
+    # Install EDB CNP operator from public manifest first so the namespace and
+    # CRDs exist before cnp-cluster-config.yaml is applied in Step 8.
+    CNP_RELEASE="v${CNPG_VERSION}"
+    CNP_MANIFEST="https://get.enterprisedb.io/cnp/postgresql-operator-${CNPG_VERSION}.yaml"
+    info "Installing EDB CNP operator v${CNPG_VERSION} from public manifest..."
+    if curl -sf --max-time 10 "${CNP_MANIFEST}" -o /dev/null 2>/dev/null; then
+      kubectl apply -f "${CNP_MANIFEST}" --context "${CONTEXT}" 2>/dev/null || true
+      success "EDB CNP operator manifest applied."
+    else
+      warn "Public manifest not found at ${CNP_MANIFEST} — operator will be restored from cnp-cluster-config.yaml in Step 8."
+    fi
     ;;
 
   "pgd-operator-system")
@@ -510,8 +516,8 @@ kubectl delete pod \
   -n "${OPERATOR_NS}" --all --ignore-not-found=true 2>/dev/null || true
 success "Ghost pods cleared."
 
-info "Waiting 15 s for operator deployment to start..."
-sleep 15
+info "Waiting 30 s for operator deployment to start..."
+sleep 30
 
 # Find controller-manager / operator deployment dynamically
 CTRL_DEPLOY=$(kubectl get deployment -n "${OPERATOR_NS}" \

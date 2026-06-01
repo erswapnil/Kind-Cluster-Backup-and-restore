@@ -269,7 +269,7 @@ success "Snapshot saved: $(du -sh "${WORK_DIR}/cnpg-snapshot.tar.gz" | cut -f1) 
 # ── Step 5: Export Kubernetes resources ───────────────────────────────────────
 step "Step 5 · Export Kubernetes resources"
 kubectl --context "${CONTEXT}" \
-  get all,configmaps,secrets,storageclasses \
+  get all,configmaps,secrets,storageclasses,namespaces \
   --all-namespaces -o yaml > "${WORK_DIR}/cnp-cluster-config.yaml"
 success "Config exported: $(du -sh "${WORK_DIR}/cnp-cluster-config.yaml" | cut -f1)"
 
