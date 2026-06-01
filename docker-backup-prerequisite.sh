@@ -1,19 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # docker-backup-prerequisite.sh
-# Run this ONCE on the source machine before running docker-cluster-backup.sh.
-#
-# What it checks / installs:
-#   - Homebrew
-#   - Docker Desktop (installed + daemon running)
-#   - kind       (installs via brew if missing)
-#   - kubectl    (installs via brew if missing)
-#   - git        (installs via brew if missing)
-#   - git-lfs    (installs via brew if missing)
-#   - python3    (installs via brew if missing)
-#   - curl       (built-in on macOS, verified)
-#   - At least one kind cluster exists
-#   - Enough free disk space (warns if < 5 GB)
+# Run ONCE on the source machine before running docker-cluster-backup.sh.
+# Supports: macOS (Homebrew) + Linux (RHEL/CentOS/Ubuntu/Debian)
 # =============================================================================
 
 set -euo pipefail
@@ -30,44 +19,147 @@ step()    { echo -e "\n${BOLD}--- $* ---${NC}"; }
 ERRORS=0
 flag_error() { warn "$*"; ERRORS=$(( ERRORS + 1 )); }
 
+# --- Detect OS ---
+OS="unknown"
+PKG_MGR="unknown"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  OS="macos"
+elif [[ -f /etc/os-release ]]; then
+  source /etc/os-release
+  case "${ID}" in
+    rhel|centos|fedora|rocky|almalinux) OS="rhel";   PKG_MGR="dnf" ;;
+    ubuntu|debian|linuxmint)            OS="debian";  PKG_MGR="apt" ;;
+    *)                                  OS="linux";   PKG_MGR="dnf" ;;
+  esac
+fi
+
 echo ""
 echo -e "${BOLD}======================================================${NC}"
 echo -e "${BOLD}   kind CNPG - Pre-Backup Prerequisite Check          ${NC}"
-echo -e "${BOLD}   Run before docker-cluster-backup.sh on source Mac  ${NC}"
+echo -e "${BOLD}   Supports: macOS / RHEL / Ubuntu                    ${NC}"
 echo -e "${BOLD}======================================================${NC}"
 echo ""
+info "Detected OS: ${OS}"
+echo ""
 
-# --- Step 1: Homebrew ---
-step "Step 1 - Homebrew"
-if command -v brew &>/dev/null; then
-  success "Homebrew found: $(brew --version | head -1)"
+# ── macOS install helpers ──────────────────────────────────────────────────────
+install_brew_pkg() {
+  local pkg="$1"
+  info "Installing ${pkg} via Homebrew..."
+  brew install "${pkg}"
+}
+
+# ── Linux install helpers ──────────────────────────────────────────────────────
+install_linux_pkg() {
+  local pkg="$1"
+  info "Installing ${pkg} via ${PKG_MGR}..."
+  if [[ "${PKG_MGR}" == "dnf" ]]; then
+    sudo dnf install -y "${pkg}"
+  else
+    sudo apt-get install -y "${pkg}"
+  fi
+}
+
+install_kind_linux() {
+  info "Installing kind binary for Linux..."
+  ARCH=$(uname -m)
+  [[ "${ARCH}" == "x86_64" ]] && ARCH="amd64"
+  [[ "${ARCH}" == "aarch64" ]] && ARCH="arm64"
+  KIND_VERSION=$(curl -s https://api.github.com/repos/kubernetes-sigs/kind/releases/latest \
+    | grep '"tag_name"' | cut -d'"' -f4)
+  curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${ARCH}" -o /usr/local/bin/kind
+  chmod +x /usr/local/bin/kind
+  success "kind installed: $(kind version)"
+}
+
+install_kubectl_linux() {
+  info "Installing kubectl for Linux..."
+  ARCH=$(uname -m)
+  [[ "${ARCH}" == "x86_64" ]] && ARCH="amd64"
+  [[ "${ARCH}" == "aarch64" ]] && ARCH="arm64"
+  K8S_VER=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+  curl -fsSL "https://dl.k8s.io/release/${K8S_VER}/bin/linux/${ARCH}/kubectl" -o /usr/local/bin/kubectl
+  chmod +x /usr/local/bin/kubectl
+  success "kubectl installed: $(kubectl version --client 2>/dev/null | head -1)"
+}
+
+install_gitlfs_linux() {
+  if [[ "${PKG_MGR}" == "dnf" ]]; then
+    # Enable EPEL for git-lfs on RHEL
+    if ! rpm -q epel-release &>/dev/null 2>&1; then
+      info "Enabling EPEL repository..."
+      sudo dnf install -y epel-release 2>/dev/null || \
+        sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel).noarch.rpm
+    fi
+    sudo dnf install -y git-lfs
+  else
+    sudo apt-get install -y git-lfs
+  fi
+}
+
+# --- Step 1: Package manager check ---
+step "Step 1 - Package manager"
+if [[ "${OS}" == "macos" ]]; then
+  if command -v brew &>/dev/null; then
+    success "Homebrew found: $(brew --version | head -1)"
+  else
+    error "Homebrew is not installed. Install from https://brew.sh and re-run."
+  fi
+elif [[ "${PKG_MGR}" == "dnf" ]]; then
+  if command -v dnf &>/dev/null; then
+    success "dnf found ($(dnf --version | head -1))"
+  else
+    error "dnf not found. Cannot auto-install packages."
+  fi
 else
-  error "Homebrew is not installed. Install it from https://brew.sh and re-run this script."
+  if command -v apt-get &>/dev/null; then
+    success "apt-get found"
+    sudo apt-get update -qq
+  else
+    error "apt-get not found. Cannot auto-install packages."
+  fi
 fi
 
-# --- Step 2: Docker Desktop ---
-step "Step 2 - Docker Desktop"
+# --- Step 2: Docker ---
+step "Step 2 - Docker"
 if ! command -v docker &>/dev/null; then
-  echo ""
-  echo -e "  ${RED}Docker Desktop is not installed.${NC}"
-  echo ""
-  echo "  Install it from: https://docker.com/products/docker-desktop"
-  echo "  After installing, open Docker Desktop and wait for the whale"
-  echo "  icon in the menu bar to become steady, then re-run this script."
-  echo ""
-  error "Docker Desktop required."
+  if [[ "${OS}" == "macos" ]]; then
+    echo -e "  ${RED}Docker Desktop is not installed.${NC}"
+    echo "  Install from: https://docker.com/products/docker-desktop"
+    error "Docker Desktop required."
+  elif [[ "${PKG_MGR}" == "dnf" ]]; then
+    info "Installing Docker Engine on RHEL/CentOS..."
+    sudo dnf install -y dnf-plugins-core
+    sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo 2>/dev/null || \
+      sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    sudo dnf install -y docker-ce docker-ce-cli containerd.io
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    success "Docker Engine installed and started."
+  else
+    info "Installing Docker Engine on Ubuntu/Debian..."
+    sudo apt-get install -y ca-certificates curl gnupg
+    sudo install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+      | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt-get update -qq
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    success "Docker Engine installed and started."
+  fi
 fi
 success "Docker binary found: $(command -v docker)"
 
 if ! docker info &>/dev/null 2>&1; then
-  echo ""
-  echo -e "  ${YELLOW}Docker Desktop is installed but not running.${NC}"
-  echo ""
-  echo "  -> Open Docker Desktop from Applications"
-  echo "  -> Wait for the whale icon in the menu bar to go solid (not spinning)"
-  echo "  -> Then re-run this script"
-  echo ""
-  error "Docker daemon must be running."
+  if [[ "${OS}" == "macos" ]]; then
+    echo "  -> Open Docker Desktop and wait for whale icon to go solid"
+    error "Docker daemon not running."
+  else
+    info "Starting Docker service..."
+    sudo systemctl start docker || error "Could not start Docker. Run: sudo systemctl start docker"
+  fi
 fi
 success "Docker daemon is running."
 info "Docker version: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'unknown')"
@@ -77,9 +169,11 @@ step "Step 3 - kind"
 if command -v kind &>/dev/null; then
   success "kind already installed: $(kind version)"
 else
-  info "Installing kind via Homebrew..."
-  brew install kind
-  success "kind installed: $(kind version)"
+  if [[ "${OS}" == "macos" ]]; then
+    install_brew_pkg kind
+  else
+    install_kind_linux
+  fi
 fi
 
 # --- Step 4: kubectl ---
@@ -87,9 +181,11 @@ step "Step 4 - kubectl"
 if command -v kubectl &>/dev/null; then
   success "kubectl already installed: $(kubectl version --client 2>/dev/null | head -1)"
 else
-  info "Installing kubectl via Homebrew..."
-  brew install kubectl
-  success "kubectl installed."
+  if [[ "${OS}" == "macos" ]]; then
+    install_brew_pkg kubectl
+  else
+    install_kubectl_linux
+  fi
 fi
 
 # --- Step 5: git ---
@@ -97,9 +193,11 @@ step "Step 5 - git"
 if command -v git &>/dev/null; then
   success "git already installed: $(git --version)"
 else
-  info "Installing git via Homebrew..."
-  brew install git
-  success "git installed: $(git --version)"
+  if [[ "${OS}" == "macos" ]]; then
+    install_brew_pkg git
+  else
+    install_linux_pkg git
+  fi
 fi
 
 # --- Step 6: git-lfs ---
@@ -107,15 +205,15 @@ step "Step 6 - git-lfs"
 if command -v git-lfs &>/dev/null; then
   success "git-lfs already installed: $(git-lfs version)"
 else
-  info "Installing git-lfs via Homebrew..."
-  brew install git-lfs
+  if [[ "${OS}" == "macos" ]]; then
+    install_brew_pkg git-lfs
+  else
+    install_gitlfs_linux
+  fi
   git lfs install
   success "git-lfs installed: $(git-lfs version)"
 fi
-
-# Ensure git lfs is initialized globally
 if ! git lfs env &>/dev/null 2>&1; then
-  info "Initializing git-lfs globally..."
   git lfs install
 fi
 success "git-lfs is initialized."
@@ -125,9 +223,11 @@ step "Step 7 - python3"
 if command -v python3 &>/dev/null; then
   success "python3 already installed: $(python3 --version)"
 else
-  info "Installing python3 via Homebrew..."
-  brew install python3
-  success "python3 installed: $(python3 --version)"
+  if [[ "${OS}" == "macos" ]]; then
+    install_brew_pkg python3
+  else
+    install_linux_pkg python3
+  fi
 fi
 
 # --- Step 8: curl ---
@@ -135,9 +235,11 @@ step "Step 8 - curl"
 if command -v curl &>/dev/null; then
   success "curl found: $(curl --version | head -1)"
 else
-  info "Installing curl via Homebrew..."
-  brew install curl
-  success "curl installed."
+  if [[ "${OS}" == "macos" ]]; then
+    install_brew_pkg curl
+  else
+    install_linux_pkg curl
+  fi
 fi
 
 # --- Step 9: kind cluster check ---
@@ -146,8 +248,7 @@ CLUSTERS=$(kind get clusters 2>/dev/null || true)
 if [[ -z "${CLUSTERS}" ]]; then
   flag_error "No kind clusters found. You need a running cluster to back up."
   echo ""
-  echo "  Create one with:"
-  echo "  kind create cluster --name my-cluster"
+  echo "  Create one with: kind create cluster --name my-cluster"
   echo ""
 else
   CLUSTER_COUNT=$(echo "${CLUSTERS}" | wc -l | tr -d ' ')
@@ -156,32 +257,30 @@ else
   i=1
   while IFS= read -r cl; do
     printf "    %-3s %s\n" "$i." "$cl"
-    ((i++))
+    i=$(( i + 1 ))
   done <<< "${CLUSTERS}"
   echo ""
 fi
 
-# --- Step 10: Disk space check ---
+# --- Step 10: Disk space ---
 step "Step 10 - Disk space"
 FREE_KB=$(df -k . | tail -1 | awk '{print $4}')
 FREE_GB=$(( FREE_KB / 1024 / 1024 ))
-info "Free disk space in current directory: ~${FREE_GB} GB"
-
+info "Free disk space: ~${FREE_GB} GB"
 if [[ "${FREE_GB}" -lt 3 ]]; then
-  flag_error "Low disk space: ${FREE_GB} GB free. A CNPG snapshot can be 500 MB - 1 GB. Free up space and re-run."
+  flag_error "Low disk space: ${FREE_GB} GB free. Need at least 3 GB for snapshot."
 elif [[ "${FREE_GB}" -lt 5 ]]; then
-  warn "Disk space is tight: ${FREE_GB} GB free. Backup will likely still fit but it is close."
+  warn "Disk space tight: ${FREE_GB} GB free. Backup will likely fit but it is close."
 else
-  success "Disk space is sufficient: ${FREE_GB} GB free."
+  success "Disk space sufficient: ${FREE_GB} GB free."
 fi
 
 # --- Summary ---
 echo ""
 echo -e "${BOLD}--- Pre-backup check complete ---${NC}"
 echo ""
-
 if [[ "${ERRORS}" -gt 0 ]]; then
-  echo -e "  ${RED}${ERRORS} issue(s) found - fix the errors above before running docker-cluster-backup.sh.${NC}"
+  echo -e "  ${RED}${ERRORS} issue(s) found - fix above before running docker-cluster-backup.sh.${NC}"
   echo ""
   exit 1
 else
