@@ -407,7 +407,22 @@ EOF
 success "kind-config.yaml written."
 warn "If the original cluster had a different number of workers, edit kind-config.yaml and re-run."
 
-kind create cluster --name "${CLUSTER_NAME}" --image "${SNAPSHOT_IMAGE_TAG}" --config "${KIND_CONFIG}"
+# Patch snapshot image — remove stale machine-specific kubelet config so kubeadm
+# regenerates it with the correct IP on this machine (avoids IP mismatch errors).
+info "Patching snapshot image to remove stale machine-specific configs..."
+PATCHED_IMAGE="${SNAPSHOT_IMAGE_TAG}-patched"
+PATCH_CTR=$(docker create "${SNAPSHOT_IMAGE_TAG}" sleep 1 2>/dev/null)
+docker start "${PATCH_CTR}" &>/dev/null
+docker exec "${PATCH_CTR}" rm -f \
+  /etc/kubernetes/kubelet.conf \
+  /var/lib/kubelet/config.yaml 2>/dev/null || true
+docker stop "${PATCH_CTR}" &>/dev/null
+docker commit "${PATCH_CTR}" "${PATCHED_IMAGE}" &>/dev/null
+docker rm "${PATCH_CTR}" &>/dev/null
+success "Snapshot image patched."
+
+kind create cluster --name "${CLUSTER_NAME}" --image "${PATCHED_IMAGE}" --config "${KIND_CONFIG}"
+docker rmi "${PATCHED_IMAGE}" &>/dev/null || true
 CONTEXT="kind-${CLUSTER_NAME}"
 success "kind cluster '${CLUSTER_NAME}' created."
 
