@@ -193,9 +193,16 @@ step "Step 3 · Download backup files from GitHub  (git clone + LFS)"
 GIT_REPO="https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git"
 WORK_DIR="$(mktemp -d -t kind-restore-XXXXXX)"
 
-info "Cloning repo with LFS — snapshot tar may take several minutes to download..."
-git clone --depth=1 "${GIT_REPO}" "${WORK_DIR}/repo"
+info "Cloning repo (skipping LFS for speed)..."
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 "${GIT_REPO}" "${WORK_DIR}/repo"
 success "Repo cloned."
+
+info "Downloading snapshot file via LFS (${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz — may take several minutes)..."
+git -C "${WORK_DIR}/repo" config lfs.fetchrecentrefsdays 0
+git -C "${WORK_DIR}/repo" config http.lowSpeedLimit 1000
+git -C "${WORK_DIR}/repo" config http.lowSpeedTime 600
+git -C "${WORK_DIR}/repo" lfs pull --include="${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz"
+success "Snapshot downloaded."
 
 BACKUP_SUBDIR="${WORK_DIR}/repo/${CLUSTER_FOLDER}"
 if [[ ! -d "${BACKUP_SUBDIR}" ]]; then
