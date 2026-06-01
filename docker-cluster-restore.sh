@@ -400,6 +400,7 @@ success "kind-config.yaml written."
 warn "If the original cluster had a different number of workers, edit kind-config.yaml and re-run."
 
 kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}"
+CONTEXT="kind-${CLUSTER_NAME}"
 success "kind cluster '${CLUSTER_NAME}' created."
 
 # ── Step 7: Install operator ──────────────────────────────────────────────────
