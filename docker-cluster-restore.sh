@@ -293,7 +293,7 @@ if [[ -n "${CNPG_VERSION}" ]]; then
 else
   warn "${VERSION_LABEL} not found in backup metadata. Attempting detection from snapshot image..."
   info "Loading snapshot to inspect image labels..."
-  LOADED_IMAGE=$(zcat "${SNAPSHOT_TAR}" | docker load 2>&1 | grep "Loaded image" | awk '{print $NF}' | head -1 || true)
+  LOADED_IMAGE=$(gzip -dc "${SNAPSHOT_TAR}" | docker load 2>&1 | grep "Loaded image" | awk '{print $NF}' | head -1 || true)
   if [[ -n "${LOADED_IMAGE}" ]]; then
     CNPG_VERSION=$(docker inspect "${LOADED_IMAGE}" \
       --format '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}}{{"\n"}}{{end}}' \
@@ -365,7 +365,7 @@ if docker image inspect "${SNAPSHOT_IMAGE_TAG}" &>/dev/null 2>&1; then
   success "Docker image already loaded (from version detection step)."
 else
   info "Loading cnpg-snapshot.tar.gz into Docker (decompressing + loading, may take a few minutes)..."
-  zcat "${SNAPSHOT_TAR}" | docker load
+  gzip -dc "${SNAPSHOT_TAR}" | docker load
   success "Docker image loaded."
 fi
 
