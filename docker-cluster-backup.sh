@@ -262,9 +262,9 @@ info "Working directory: ${WORK_DIR}"
 step "Step 4 · Snapshot control-plane container"
 info "docker commit ${CONTAINER_ID} → ${CLUSTER_NAME}-snapshot:v1"
 docker commit "${CONTAINER_ID}" "${CLUSTER_NAME}-snapshot:v1"
-info "docker save → cnpg-snapshot.tar.gz  (compressing with gzip — may take a few minutes)..."
-docker save "${CLUSTER_NAME}-snapshot:v1" | gzip > "${WORK_DIR}/cnpg-snapshot.tar.gz"
-success "Snapshot saved: $(du -sh "${WORK_DIR}/cnpg-snapshot.tar.gz" | cut -f1)  (compressed)"
+info "docker save → cnpg-snapshot.tar  (may take a few minutes for large clusters)..."
+docker save -o "${WORK_DIR}/cnpg-snapshot.tar" "${CLUSTER_NAME}-snapshot:v1"
+success "Snapshot saved: $(du -sh "${WORK_DIR}/cnpg-snapshot.tar" | cut -f1)"
 
 # ── Step 5: Export Kubernetes resources ───────────────────────────────────────
 step "Step 5 · Export Kubernetes resources"
@@ -331,18 +331,18 @@ git -C "${REPO_DIR}" config user.name "${LOGIN}"
 git -C "${REPO_DIR}" config user.email "${LOGIN}@users.noreply.github.com"
 git -C "${REPO_DIR}" config http.postBuffer 1073741824
 
-# Ensure .gitattributes tracks *.tar.gz via LFS
+# Ensure .gitattributes tracks *.tar via LFS
 git -C "${REPO_DIR}" lfs install 2>/dev/null || true
-if ! grep -q "^\*.tar.gz" "${REPO_DIR}/.gitattributes" 2>/dev/null; then
-  echo "*.tar.gz filter=lfs diff=lfs merge=lfs -text" >> "${REPO_DIR}/.gitattributes"
+if ! grep -q "^\*.tar" "${REPO_DIR}/.gitattributes" 2>/dev/null; then
+  echo "*.tar filter=lfs diff=lfs merge=lfs -text" >> "${REPO_DIR}/.gitattributes"
   git -C "${REPO_DIR}" add .gitattributes
 fi
-success "Git LFS configured for snapshot tar.gz."
+success "Git LFS configured for snapshot tar."
 
 # Create/update cluster subfolder and copy files
 mkdir -p "${REPO_DIR}/${CLUSTER_NAME}"
 info "Copying backup artifacts into ${CLUSTER_NAME}/..."
-cp "${WORK_DIR}/cnpg-snapshot.tar.gz"     "${REPO_DIR}/${CLUSTER_NAME}/cnpg-snapshot.tar.gz"
+cp "${WORK_DIR}/cnpg-snapshot.tar"        "${REPO_DIR}/${CLUSTER_NAME}/cnpg-snapshot.tar"
 cp "${WORK_DIR}/cnp-cluster-config.yaml"  "${REPO_DIR}/${CLUSTER_NAME}/cnp-cluster-config.yaml"
 cp "${WORK_DIR}/cnpg-db-blueprints.yaml"  "${REPO_DIR}/${CLUSTER_NAME}/cnpg-db-blueprints.yaml"
 cp "${WORK_DIR}/cnpg-version.txt"         "${REPO_DIR}/${CLUSTER_NAME}/cnpg-version.txt"
@@ -362,7 +362,7 @@ info "Pushing to GitHub — LFS uploads the snapshot tar separately (may take se
 git -C "${REPO_DIR}" push origin main 2>&1 | sed "s/${GITHUB_TOKEN}/****/g"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
-TAR_SIZE=$(du -sh "${WORK_DIR}/cnpg-snapshot.tar.gz" | cut -f1)
+TAR_SIZE=$(du -sh "${WORK_DIR}/cnpg-snapshot.tar" | cut -f1)
 CFG_SIZE=$(du -sh "${WORK_DIR}/cnp-cluster-config.yaml" | cut -f1)
 BP_SIZE=$(du -sh  "${WORK_DIR}/cnpg-db-blueprints.yaml" | cut -f1)
 
@@ -374,7 +374,7 @@ echo ""
 echo -e "  ${CYAN}https://github.com/${GITHUB_USER}/${GITHUB_REPO}/tree/main/${CLUSTER_NAME}${NC}"
 echo ""
 echo -e "  ${BOLD}Files uploaded:${NC}"
-echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnpg-snapshot.tar.gz      ${TAR_SIZE}  (compressed · via Git LFS)"
+echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnpg-snapshot.tar         ${TAR_SIZE}  (via Git LFS)"
 echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnp-cluster-config.yaml   ${CFG_SIZE}"
 echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnpg-db-blueprints.yaml   ${BP_SIZE}"
 echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnpg-version.txt"
