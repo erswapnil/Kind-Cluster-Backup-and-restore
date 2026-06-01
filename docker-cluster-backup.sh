@@ -293,16 +293,24 @@ export_crd() {
   fi
 }
 
-# Community CNPG + EDB CNP
-export_crd "clusters.postgresql.cnpg.io"          "clusters.postgresql.cnpg.io"
-export_crd "poolers.postgresql.cnpg.io"           "poolers.postgresql.cnpg.io"
-export_crd "scheduledbackups.postgresql.cnpg.io"  "scheduledbackups.postgresql.cnpg.io"
-# EDB PGD4K
-export_crd "pgdgroups.pgd.k8s.enterprisedb.io"    "pgdgroups.pgd.k8s.enterprisedb.io"
+# Community CloudNativePG (cnpg-system)
+export_crd "clusters.postgresql.cnpg.io"                    "clusters.postgresql.cnpg.io"
+export_crd "poolers.postgresql.cnpg.io"                     "poolers.postgresql.cnpg.io"
+export_crd "scheduledbackups.postgresql.cnpg.io"            "scheduledbackups.postgresql.cnpg.io"
+# EDB Postgres for Kubernetes / CNP (postgresql-operator-system)
+# Uses postgresql.k8s.enterprisedb.io API group
+export_crd "clusters.postgresql.k8s.enterprisedb.io"        "clusters.postgresql.k8s.enterprisedb.io"
+export_crd "poolers.postgresql.k8s.enterprisedb.io"         "poolers.postgresql.k8s.enterprisedb.io"
+export_crd "scheduledbackups.postgresql.k8s.enterprisedb.io" "scheduledbackups.postgresql.k8s.enterprisedb.io"
+export_crd "databases.postgresql.k8s.enterprisedb.io"       "databases.postgresql.k8s.enterprisedb.io"
+export_crd "imagecatalogs.postgresql.k8s.enterprisedb.io"   "imagecatalogs.postgresql.k8s.enterprisedb.io"
+export_crd "clusterimagecatalogs.postgresql.k8s.enterprisedb.io" "clusterimagecatalogs.postgresql.k8s.enterprisedb.io"
+# EDB PGD4K (pgd-operator-system)
+export_crd "pgdgroups.pgd.k8s.enterprisedb.io"              "pgdgroups.pgd.k8s.enterprisedb.io"
 # cert-manager (required for PGD TLS; safely skipped on CNPG/CNP)
-export_crd "issuers.cert-manager.io"              "cert-manager Issuers"
-export_crd "certificates.cert-manager.io"         "cert-manager Certificates"
-export_crd "clusterissuers.cert-manager.io"       "cert-manager ClusterIssuers"
+export_crd "issuers.cert-manager.io"                        "cert-manager Issuers"
+export_crd "certificates.cert-manager.io"                   "cert-manager Certificates"
+export_crd "clusterissuers.cert-manager.io"                 "cert-manager ClusterIssuers"
 
 if [[ "${EXPORTED_SOMETHING}" == "true" ]]; then
   success "Blueprints exported: $(du -sh "${WORK_DIR}/cnpg-db-blueprints.yaml" | cut -f1)"
