@@ -355,12 +355,16 @@ success "Cluster name  : ${CLUSTER_NAME}"
 success "Operator      : ${OPERATOR_TYPE}"
 success "Op namespace  : ${OPERATOR_NS}"
 
-# Cluster name is fixed — renaming is not supported because TLS certificates
-# and kubeconfig files inside the snapshot are bound to the original hostname.
+# Allow restoring under a different cluster name
 echo ""
-echo -e "  Cluster will be restored as: ${BOLD}${CLUSTER_NAME}${NC}"
-warn "Renaming is not supported — the snapshot certificates are bound to '${CLUSTER_NAME}'."
-info "Using cluster name: ${CLUSTER_NAME}"
+echo -e "  The backup cluster name is: ${BOLD}${CLUSTER_NAME}${NC}"
+read -rp "  Restore as a different name? (press Enter to keep '${CLUSTER_NAME}'): " RESTORE_NAME
+if [[ -n "${RESTORE_NAME}" && "${RESTORE_NAME}" != "${CLUSTER_NAME}" ]]; then
+  info "Cluster will be restored as: ${RESTORE_NAME}"
+  CLUSTER_NAME="${RESTORE_NAME}"
+else
+  info "Using cluster name: ${CLUSTER_NAME}"
+fi
 
 # Handle operator version
 if [[ -n "${CNPG_VERSION}" ]]; then
@@ -433,14 +437,15 @@ read -rp "Start restore? [Y/n]: " GO
 GO="${GO:-Y}"
 [[ "${GO}" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
 
-# ── Step 5: Load Docker image ─────────────────────────────────────────────────
+# ── Step 5: Load Docker snapshot image ───────────────────────────────────────
 step "Step 5 · Load Docker snapshot image"
 
-# The snapshot tar contains the image tagged with the ORIGINAL cluster name.
-# We load it and capture the actual tag, then re-tag if the cluster was renamed.
+# Load snapshot into Docker's image cache.
+# Docker Desktop shares its image store with kind nodes, so all images
+# embedded in the snapshot (postgres, operator) become available to pods
+# without needing registry credentials.
 ORIG_CLUSTER_NAME=$(cat "${BACKUP_SUBDIR}/cluster-name.txt" 2>/dev/null | tr -d '[:space:]' || echo "${CLUSTER_NAME}")
 ORIG_SNAPSHOT_TAG="${ORIG_CLUSTER_NAME}-snapshot:v1"
-SNAPSHOT_IMAGE_TAG="${CLUSTER_NAME}-snapshot:v1"
 
 if docker image inspect "${ORIG_SNAPSHOT_TAG}" &>/dev/null 2>&1; then
   success "Docker image already loaded: ${ORIG_SNAPSHOT_TAG}"
@@ -448,12 +453,6 @@ else
   info "Loading cnpg-snapshot.tar.gz into Docker (decompressing + loading, may take a few minutes)..."
   LOADED_TAG=$(gzip -dc "${SNAPSHOT_TAR}" | docker load 2>&1 | grep "Loaded image" | awk '{print $NF}' | head -1 || true)
   success "Docker image loaded: ${LOADED_TAG:-${ORIG_SNAPSHOT_TAG}}"
-fi
-
-# Re-tag with new cluster name if renamed
-if [[ "${CLUSTER_NAME}" != "${ORIG_CLUSTER_NAME}" ]]; then
-  info "Re-tagging image for renamed cluster: ${ORIG_SNAPSHOT_TAG} → ${SNAPSHOT_IMAGE_TAG}"
-  docker tag "${ORIG_SNAPSHOT_TAG}" "${SNAPSHOT_IMAGE_TAG}" 2>/dev/null || true
 fi
 
 # ── Step 6: Create kind cluster ───────────────────────────────────────────────
@@ -467,32 +466,10 @@ nodes:
 - role: worker
 EOF
 success "kind-config.yaml written."
-warn "If the original cluster had a different number of workers, edit kind-config.yaml and re-run."
 
-# Patch snapshot image using docker build (avoids systemd/exec issues).
-# Removes stale machine-specific configs and resets systemd state so the
-# container initializes cleanly on any host.
-info "Patching snapshot image to remove stale machine-specific configs..."
-PATCHED_IMAGE="${SNAPSHOT_IMAGE_TAG}-patched"
-DOCKERFILE="${WORK_DIR}/Dockerfile.patch"
-
-cat > "${DOCKERFILE}" << DOCKEREOF
-FROM ${SNAPSHOT_IMAGE_TAG}
-SHELL ["/bin/sh", "-c"]
-RUN rm -f /etc/kubernetes/kubelet.conf /var/lib/kubelet/config.yaml; \
-    echo -n > /etc/machine-id; \
-    echo -n > /var/lib/dbus/machine-id; \
-    rm -rf /var/log/journal/; \
-    mkdir -p /var/log/journal/; \
-    rm -f /run/machine-id; \
-    true
-DOCKEREOF
-
-docker build --no-cache -t "${PATCHED_IMAGE}" -f "${DOCKERFILE}" "${WORK_DIR}/" &>/dev/null
-success "Snapshot image patched."
-
-kind create cluster --name "${CLUSTER_NAME}" --image "${PATCHED_IMAGE}" --config "${KIND_CONFIG}"
-docker rmi "${PATCHED_IMAGE}" &>/dev/null || true
+# Create a fresh kind cluster with the standard node image.
+# The snapshot was loaded into Docker above to pre-cache all workload images.
+kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}"
 CONTEXT="kind-${CLUSTER_NAME}"
 success "kind cluster '${CLUSTER_NAME}' created."
 
@@ -539,15 +516,26 @@ case "${OPERATOR_NS}" in
       --context "kind-${CLUSTER_NAME}" \
       --validate=false \
       -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
-    info "Waiting for cert-manager webhook pods to be Ready (up to 90 s)..."
+    info "Waiting for cert-manager pods to be Ready (up to 120 s)..."
     kubectl wait pod \
       --for=condition=ready \
       --selector app.kubernetes.io/instance=cert-manager \
       --namespace cert-manager \
       --context "kind-${CLUSTER_NAME}" \
-      --timeout=90s \
+      --timeout=120s \
       2>/dev/null || warn "cert-manager pods not fully Ready yet — continuing anyway."
-    success "cert-manager ${CERT_MANAGER_VERSION} installed."
+
+    # Extra wait for the webhook endpoint to register and become reachable.
+    # Without this, Issuer creation via the webhook fails with "connection refused".
+    info "Waiting 30 s for cert-manager webhook endpoint to register..."
+    sleep 30
+    # Bounce the webhook deployment to ensure endpoint is fresh
+    kubectl rollout restart deployment/cert-manager-webhook \
+      -n cert-manager --context "kind-${CLUSTER_NAME}" &>/dev/null || true
+    kubectl rollout status deployment/cert-manager-webhook \
+      -n cert-manager --context "kind-${CLUSTER_NAME}" \
+      --timeout=60s &>/dev/null || true
+    success "cert-manager ${CERT_MANAGER_VERSION} installed and webhook ready."
 
     # Step 7b: PGD operator manifest (creates pgd-operator-system namespace + operator deployment)
     PGD_MANIFEST="https://get.enterprisedb.io/pg4k-pgd/pg4k-pgd-${CNPG_VERSION}.yaml"
