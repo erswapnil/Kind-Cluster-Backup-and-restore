@@ -686,22 +686,21 @@ success "Database blueprints applied."
 
 # ── Health check ──────────────────────────────────────────────────────────────
 step "Health check — Waiting for database pods"
-info "Waiting up to 5 minutes for all pods across all namespaces to reach Running state..."
+info "Waiting up to 3 minutes for pods in 'default' namespace to reach Running state..."
 info "(First-time restore may pull PostgreSQL images — this can take 5-10 min. Re-run if needed.)"
 
-DEADLINE=$(( $(date +%s) + 300 ))
+DEADLINE=$(( $(date +%s) + 180 ))
 while true; do
   NOT_READY=$(kubectl get pods \
     --context "kind-${CLUSTER_NAME}" \
-    --all-namespaces --no-headers 2>/dev/null \
-    | grep -v "Running" | grep -v "Completed" \
-    | grep -v "kube-system" | grep -v "local-path-storage" || true)
+    -n default --no-headers 2>/dev/null \
+    | grep -v "Running" | grep -v "Completed" || true)
   if [[ -z "${NOT_READY}" ]]; then
-    success "All database and operator pods are Running."
+    success "All pods in 'default' namespace are Running."
     break
   fi
   if [[ $(date +%s) -gt ${DEADLINE} ]]; then
-    warn "Timeout — some pods may still be starting. Check status below."
+    warn "Timeout — pods may still be pulling images. Re-run in a few minutes."
     break
   fi
   info "Pods not yet ready — retrying in 10 s..."
@@ -711,9 +710,9 @@ done
 # ── Final state ───────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}─── Final cluster state ───${NC}"
+kubectl get pods --context "kind-${CLUSTER_NAME}" -n default 2>/dev/null || true
 echo ""
-echo -e "  ${BOLD}All namespaces:${NC}"
-kubectl get pods --context "kind-${CLUSTER_NAME}" --all-namespaces 2>/dev/null || true
+kubectl get pods --context "kind-${CLUSTER_NAME}" -n "${OPERATOR_NS}" 2>/dev/null || true
 echo ""
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -725,8 +724,7 @@ echo ""
 success "Cluster '${CLUSTER_NAME}' is up and running."
 echo ""
 echo -e "  ${BOLD}Useful commands:${NC}"
-echo "  kubectl get pods --context kind-${CLUSTER_NAME} --all-namespaces"
+echo "  kubectl get pods --context kind-${CLUSTER_NAME} -n default"
 echo "  kubectl get pods --context kind-${CLUSTER_NAME} -n ${OPERATOR_NS}"
-echo "  kubectl get clusters.postgresql.cnpg.io --context kind-${CLUSTER_NAME} --all-namespaces"
-echo "  kubectl get pgdgroups --context kind-${CLUSTER_NAME} --all-namespaces"
+echo "  kubectl get clusters.postgresql.cnpg.io --context kind-${CLUSTER_NAME} -n default"
 echo ""
