@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kind Cluster Automation — Quick Runbook</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #1c2128;
+    --border: #30363d; --accent: #388bfd; --green: #3fb950;
+    --yellow: #d29922; --red: #f85149; --cyan: #39d3f5;
+    --text: #e6edf3; --muted: #7d8590; --dim: #484f58;
+    --r: 8px; --rs: 5px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg); color: var(--text);
+    font-size: 14px; line-height: 1.6; min-height: 100vh;
+  }
+  .page { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+  .hero {
+    text-align: center; padding: 48px 24px 40px;
+    border-bottom: 1px solid var(--border); margin-bottom: 48px;
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(56,139,253,.1); border: 1px solid rgba(56,139,253,.25);
+    color: #79c0ff; padding: 5px 14px; border-radius: 20px;
+    font-size: 12px; font-weight: 600; margin-bottom: 20px;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+  .hero h1 { font-size: 28px; font-weight: 800; margin-bottom: 10px; }
+  .hero p  { color: var(--muted); font-size: 15px; max-width: 520px; margin: 0 auto 20px; }
+  .tags { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .tag { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 12px; border: 1px solid; }
+  .tag-b { background: rgba(56,139,253,.1); color: #79c0ff; border-color: rgba(56,139,253,.25); }
+  .tag-g { background: rgba(63,185,80,.1);  color: #56d364; border-color: rgba(63,185,80,.25); }
+  .section { margin-bottom: 48px; }
+  .section-label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-bottom: 16px; }
+  h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .script-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px; }
+  @media (max-width: 600px) { .script-grid { grid-template-columns: 1fr; } }
+  .script-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 24px; position: relative;
+    overflow: hidden; transition: border-color .15s;
+  }
+  .script-card:hover { border-color: var(--accent); }
+  .script-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .card-backup::before  { background: linear-gradient(90deg, #388bfd, #1f6feb); }
+  .card-restore::before { background: linear-gradient(90deg, #3fb950, #238636); }
+  .card-icon { font-size: 28px; margin-bottom: 12px; }
+  .card-name { font-size: 13px; font-weight: 700; font-family: monospace; color: var(--cyan); margin-bottom: 4px; }
+  .card-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+  .card-desc  { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .code-block { background: #010409; border: 1px solid var(--border); border-radius: var(--rs); margin: 12px 0; overflow: hidden; }
+  .code-top { display: flex; justify-content: space-between; align-items: center; padding: 6px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+  .copy-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; transition: all .15s; }
+  .copy-btn:hover { border-color: var(--accent); color: var(--text); }
+  .copy-btn.ok    { border-color: var(--green); color: var(--green); }
+  pre { padding: 14px 16px; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12.5px; line-height: 1.8; color: var(--text); overflow-x: auto; white-space: pre; }
+  .cm { color: var(--dim); }
+  .prompt-flow { margin: 16px 0; }
+  .prompt-row { display: flex; gap: 0; align-items: stretch; margin-bottom: 2px; }
+  .prompt-label { background: var(--surface2); border: 1px solid var(--border); border-right: none; border-radius: var(--rs) 0 0 var(--rs); padding: 8px 14px; font-size: 12px; font-weight: 600; color: var(--muted); min-width: 210px; flex-shrink: 0; display: flex; align-items: center; }
+  .prompt-val { background: var(--bg); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 0 var(--rs) var(--rs) 0; padding: 8px 14px; font-size: 12px; color: var(--muted); flex: 1; font-family: monospace; }
+  .prompt-val.auto   { border-left-color: var(--green);  color: var(--green);  font-size: 11px; }
+  .prompt-val.secret { border-left-color: var(--yellow); color: var(--yellow); font-size: 11px; }
+  .does-list { list-style: none; margin: 12px 0; }
+  .does-list li { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid rgba(48,54,61,.5); font-size: 13px; }
+  .does-list li:last-child { border-bottom: none; }
+  .does-icon { flex-shrink: 0; }
+  .callout { display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--rs); margin: 14px 0; font-size: 13px; line-height: 1.5; align-items: flex-start; }
+  .callout-icon { flex-shrink: 0; }
+  .c-blue   { background: rgba(56,139,253,.07); border: 1px solid rgba(56,139,253,.2); }
+  .c-yellow { background: rgba(210,153,34,.07); border: 1px solid rgba(210,153,34,.2); }
+  .c-green  { background: rgba(63,185,80,.07);  border: 1px solid rgba(63,185,80,.2); }
+  .c-red    { background: rgba(248,81,73,.07);  border: 1px solid rgba(248,81,73,.2); }
+  .trouble { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--rs); margin-bottom: 10px; overflow: hidden; }
+  .trouble-q { padding: 11px 16px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; user-select: none; }
+  .trouble-q:hover { background: var(--surface2); }
+  .trouble-a { display: none; padding: 10px 16px 14px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--border); line-height: 1.6; }
+  .trouble.open .trouble-a { display: block; }
+  .trouble.open .trouble-q .arr { transform: rotate(180deg); }
+  .arr { transition: transform .2s; display: inline-block; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="hero-badge">🐳 Kind Cluster Automation</div>
+    <h1>Backup &amp; Restore Runbook</h1>
+    <p>Two scripts. One for backup, one for restore. Everything else is automatic.</p>
+    <div class="tags">
+      <span class="tag tag-b">kind</span>
+      <span class="tag tag-b">kubectl</span>
+      <span class="tag tag-b">CNPG</span>
+      <span class="tag tag-b">EDB CNP</span>
+      <span class="tag tag-b">PGD4K</span>
+      <span class="tag tag-g">PostgreSQL</span>
+      <span class="tag tag-b">Docker</span>
+      <span class="tag tag-b">GitHub</span>
+      <span class="tag tag-b">Git LFS</span>
+    </div>
+  </div>
+
+  <!-- Scripts overview -->
+  <div class="section">
+    <div class="section-label">The Two Scripts</div>
+    <div class="script-grid">
+      <div class="script-card card-backup">
+        <div class="card-icon">💾</div>
+        <div class="card-name">docker-cluster-backup.sh</div>
+        <div class="card-title">Backup a cluster</div>
+        <div class="card-desc">Lists your running kind clusters, you pick one by number. Auto-detects operator type and version, then uploads all artifacts directly to a GitHub folder — snapshot tar via Git LFS, YAMLs as regular files.</div>
+      </div>
+      <div class="script-card card-restore">
+        <div class="card-icon">🔄</div>
+        <div class="card-name">docker-cluster-restore.sh</div>
+        <div class="card-title">Restore a cluster</div>
+        <div class="card-desc">Fetches the list of available backup folders from GitHub and shows a numbered table. Pick one, and the script auto-downloads, reads operator type and version, and rebuilds the cluster — no manual input needed.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Prerequisites -->
+  <div class="section">
+    <div class="section-label">Step 0 — Run This First</div>
+    <h2>📋 Prerequisites</h2>
+    <p class="sub">Run the matching prereq script once on each machine before backup or restore. Takes about 1–2 minutes.</p>
+
+    <div class="script-grid" style="margin-bottom:20px;">
+      <div class="script-card card-backup">
+        <div class="card-name">docker-backup-prerequisite.sh</div>
+        <div class="card-title">Source machine setup</div>
+        <div class="card-desc" style="margin-bottom:14px;">Checks and installs: Homebrew, Docker, kind, kubectl, git, git-lfs, python3, curl. Run on the machine with the kind cluster before backup.</div>
+        <div class="code-block">
+          <div class="code-top"><span>Source machine — run once</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>curl -fsSL https://raw.githubusercontent.com/erswapnil/Kind-Cluster-Backup-and-restore/main/docker-backup-prerequisite.sh \
+  -o docker-backup-prerequisite.sh && chmod +x docker-backup-prerequisite.sh && ./docker-backup-prerequisite.sh</pre>
+        </div>
+      </div>
+      <div class="script-card card-restore">
+        <div class="card-name">docker-restore-prerequisite.sh</div>
+        <div class="card-title">Target machine setup</div>
+        <div class="card-desc" style="margin-bottom:14px;">Checks and installs: Homebrew, Docker, kind, kubectl, git, git-lfs, python3, curl. Also checks disk space and Docker resources.</div>
+        <div class="code-block">
+          <div class="code-top"><span>Target machine — run once</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>curl -fsSL https://raw.githubusercontent.com/erswapnil/Kind-Cluster-Backup-and-restore/main/docker-restore-prerequisite.sh \
+  -o docker-restore-prerequisite.sh && chmod +x docker-restore-prerequisite.sh && ./docker-restore-prerequisite.sh</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout c-blue">
+      <span class="callout-icon">ℹ️</span>
+      <div><strong>Docker Desktop is installed automatically</strong> via <code>brew install --cask docker</code> if not already present. The script will open it for you — but you still need to <strong>complete the setup wizard once</strong> (accept the license), then wait for the whale icon in the menu bar to go solid. After that, re-run the prereq script and it will pass.</div>
+    </div>
+
+    <div class="callout c-yellow">
+      <span class="callout-icon">⚠️</span>
+      <div><strong>git-lfs must be installed before backup or restore</strong> — the prereq scripts install it automatically. If you skip the prereq and run backup/restore directly, install it manually with: <code>brew install git-lfs &amp;&amp; git lfs install</code></div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Quick Start -->
+  <div class="section">
+    <div class="section-label">Quick Start — One Command, That's It</div>
+
+    <div style="margin-bottom:20px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <div style="width:28px;height:28px;border-radius:50%;background:rgba(56,139,253,.15);border:1px solid rgba(56,139,253,.3);color:var(--accent);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">1</div>
+        <span style="font-size:13px;font-weight:700;">💾 Backup a cluster <span style="color:var(--muted);font-weight:400;">— source machine</span></span>
+      </div>
+      <div class="code-block">
+        <div class="code-top"><span>Fetch &amp; run — one command</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+        <pre>curl -fsSL https://raw.githubusercontent.com/erswapnil/Kind-Cluster-Backup-and-restore/main/docker-cluster-backup.sh \
+  -o docker-cluster-backup.sh && chmod +x docker-cluster-backup.sh && ./docker-cluster-backup.sh</pre>
+      </div>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <div style="width:28px;height:28px;border-radius:50%;background:rgba(63,185,80,.15);border:1px solid rgba(63,185,80,.3);color:var(--green);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">2</div>
+        <span style="font-size:13px;font-weight:700;">🔄 Restore a cluster <span style="color:var(--muted);font-weight:400;">— destination machine</span></span>
+      </div>
+      <div class="code-block">
+        <div class="code-top"><span>Fetch &amp; run — one command</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+        <pre>curl -fsSL https://raw.githubusercontent.com/erswapnil/Kind-Cluster-Backup-and-restore/main/docker-cluster-restore.sh \
+  -o docker-cluster-restore.sh && chmod +x docker-cluster-restore.sh && ./docker-cluster-restore.sh</pre>
+      </div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Backup detail -->
+  <div class="section" id="backup">
+    <div class="section-label">Script 1</div>
+    <h2>💾 docker-cluster-backup.sh</h2>
+    <p class="sub">Run on the source machine where the kind cluster is currently running.</p>
+
+    <div class="callout c-yellow">
+      <span class="callout-icon">⚠️</span>
+      <div><strong>Before running:</strong> Docker Desktop must be running (whale icon solid) and at least one kind cluster must be running. You will need a GitHub Personal Access Token with <code>repo</code> scope to push the backup.</div>
+    </div>
+
+    <p style="font-size:13px;font-weight:600;color:var(--muted);margin:16px 0 8px;">What it asks you</p>
+    <div class="prompt-flow">
+      <div class="prompt-row">
+        <div class="prompt-label">1 · Pick cluster</div>
+        <div class="prompt-val">Shows a numbered list of all running kind control-plane containers — enter a number</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">2 · Operator type</div>
+        <div class="prompt-val auto">✅ Auto-detected from namespaces — no input needed</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">3 · Operator version</div>
+        <div class="prompt-val auto">✅ Auto-detected from container images — no input needed</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">4 · GitHub username</div>
+        <div class="prompt-val">Your GitHub username (default: <code>erswapnil</code>)</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">5 · GitHub PAT</div>
+        <div class="prompt-val secret">🔒 Hidden input — paste token, nothing echoed to terminal. Set GITHUB_TOKEN env var to skip this prompt.</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">6 · GitHub repo</div>
+        <div class="prompt-val">Default: <code>Kind-Cluster-Backup-and-restore</code> — press Enter to accept</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">7 · Confirm</div>
+        <div class="prompt-val">Shows cluster name, operator type, GitHub target — type <strong>Y</strong> to proceed</div>
+      </div>
+    </div>
+
+    <div class="callout c-yellow">
+      <span class="callout-icon">🔑</span>
+      <div><strong>GitHub PAT is required for backup</strong> (but NOT for restore). Even on a public repo, <em>pushing</em> requires authentication. Create a token with <code>repo</code> scope at <a href="https://github.com/settings/tokens" style="color:var(--accent);">github.com/settings/tokens</a>.<br/><br/>
+      To avoid typing it each time, set it as an environment variable in your shell profile:<br/>
+      <code style="color:var(--cyan);">export GITHUB_TOKEN=&lt;your-pat&gt;</code> — the script will pick it up automatically.</div>
+    </div>
+
+    <p style="font-size:13px;font-weight:600;color:var(--muted);margin:20px 0 8px;">What it does automatically</p>
+    <ul class="does-list">
+      <li><span class="does-icon">🔍</span><div><strong>Auto-detect operator</strong> — scans all three operator namespaces and reads version from container images</div></li>
+      <li><span class="does-icon">🐳</span><div><strong>docker commit + save</strong> — snapshots the control-plane container into <code>cnpg-snapshot.tar</code> (~500 MB)</div></li>
+      <li><span class="does-icon">📋</span><div><strong>kubectl export</strong> — exports all K8s resources to <code>cnp-cluster-config.yaml</code></div></li>
+      <li><span class="does-icon">🗄️</span><div><strong>CRD export</strong> — exports all Cluster/Pooler/PGD CRDs + cert-manager to <code>cnpg-db-blueprints.yaml</code> — <strong style="color:var(--red)">critical, without this no databases appear on restore</strong></div></li>
+      <li><span class="does-icon">📝</span><div><strong>Metadata files</strong> — writes <code>cnpg-version.txt</code>, <code>operator-namespace.txt</code>, <code>cert-manager-version.txt</code></div></li>
+      <li><span class="does-icon">🚀</span><div><strong>GitHub upload</strong> — clones the repo, copies all files to <code>&lt;cluster-name&gt;/</code> folder, commits and pushes (tar via Git LFS)</div></li>
+    </ul>
+
+    <p style="font-size:13px;font-weight:600;color:var(--muted);margin:20px 0 8px;">What the backup creates in GitHub</p>
+    <div class="code-block">
+      <div class="code-top"><span>GitHub repo folder structure after backup</span></div>
+      <pre>Kind-Cluster-Backup-and-restore/
+└── &lt;cluster-name&gt;/
+    ├── cnpg-snapshot.tar            <span class="cm">← ~500 MB Docker image snapshot  (Git LFS)</span>
+    ├── cnp-cluster-config.yaml      <span class="cm">← K8s resources (pods, secrets, configmaps)</span>
+    ├── cnpg-db-blueprints.yaml      <span class="cm">← PostgreSQL CRDs  ⚠️ critical</span>
+    ├── cnpg-version.txt             <span class="cm">← e.g. "1.29.1"  (auto-detected)</span>
+    ├── operator-namespace.txt       <span class="cm">← e.g. "cnpg-system"  (auto-detected)</span>
+    └── cert-manager-version.txt     <span class="cm">← present only if cert-manager is installed</span></pre>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Restore detail -->
+  <div class="section" id="restore">
+    <div class="section-label">Script 2</div>
+    <h2>🔄 docker-cluster-restore.sh</h2>
+    <p class="sub">Run on the destination machine — a colleague's laptop or any remote machine. No GitHub account or PAT needed.</p>
+
+    <div class="callout c-green">
+      <span class="callout-icon">✅</span>
+      <div><strong>No GitHub PAT needed for restore</strong> — reads from the public repo using the GitHub API and <code>git clone</code> without authentication. Anyone can restore from a public backup.</div>
+    </div>
+
+    <div class="callout c-yellow">
+      <span class="callout-icon">⚠️</span>
+      <div><strong>Before running:</strong> Docker Desktop must be running (whale icon solid, not animated). Ensure <code>git-lfs</code> is installed — the snapshot tar is stored via Git LFS and requires it to download.</div>
+    </div>
+
+    <p style="font-size:13px;font-weight:600;color:var(--muted);margin:16px 0 8px;">What it asks you</p>
+    <div class="prompt-flow">
+      <div class="prompt-row">
+        <div class="prompt-label">1 · GitHub username</div>
+        <div class="prompt-val">Default: <code>erswapnil</code> — press Enter to accept</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">2 · GitHub repo</div>
+        <div class="prompt-val">Default: <code>Kind-Cluster-Backup-and-restore</code> — press Enter to accept</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">3 · Pick backup</div>
+        <div class="prompt-val">Shows a numbered table of all backed-up clusters with operator type — enter a number</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">4 · Cluster name</div>
+        <div class="prompt-val auto">✅ Auto-read from GitHub folder metadata</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">5 · Operator version</div>
+        <div class="prompt-val auto">✅ Auto-read from cnpg-version.txt</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">6 · Operator namespace</div>
+        <div class="prompt-val auto">✅ Auto-read from operator-namespace.txt</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">7 · Rename cluster</div>
+        <div class="prompt-val">Optional — press Enter to keep original name, or type a new name</div>
+      </div>
+      <div class="prompt-row">
+        <div class="prompt-label">8 · Confirm</div>
+        <div class="prompt-val">Shows cluster name, operator type, version — type <strong>Y</strong> to proceed</div>
+      </div>
+    </div>
+
+    <div class="callout c-green" style="margin-top:14px;">
+      <span class="callout-icon">✅</span>
+      <div><strong>All three operator types supported automatically:</strong>
+        <ul style="margin-top:8px;padding-left:16px;line-height:2;">
+          <li><code>cnpg-system</code> — Community CloudNativePG</li>
+          <li><code>postgresql-operator-system</code> — EDB Postgres for CloudNativePG (EDB CNP)</li>
+          <li><code>pgd-operator-system</code> — EDB Postgres Distributed / PGD4K (Global Cluster)</li>
+        </ul>
+      </div>
+    </div>
+
+    <p style="font-size:13px;font-weight:600;color:var(--muted);margin:20px 0 8px;">What it does automatically</p>
+    <ul class="does-list">
+      <li><span class="does-icon">🌐</span><div><strong>GitHub API list</strong> — calls public API to list all backup folders as a numbered table</div></li>
+      <li><span class="does-icon">📥</span><div><strong>git clone --depth=1 with LFS</strong> — downloads the selected backup folder including the snapshot tar</div></li>
+      <li><span class="does-icon">📖</span><div><strong>Read metadata</strong> — reads operator type, version, and cluster name from metadata files</div></li>
+      <li><span class="does-icon">🐳</span><div><strong>docker load</strong> — loads the control-plane snapshot image into Docker</div></li>
+      <li><span class="does-icon">☸️</span><div><strong>kind create cluster</strong> — recreates the kind cluster from the loaded image</div></li>
+      <li><span class="does-icon">⚙️</span><div><strong>Operator install</strong> — auto-installs the correct operator at the exact backed-up version</div></li>
+      <li><span class="does-icon">📋</span><div><strong>kubectl apply</strong> — applies K8s configs + database blueprints, waits for all pods to be Ready</div></li>
+    </ul>
+
+    <div class="callout c-green">
+      <span class="callout-icon">✅</span>
+      <div><strong>Expected healthy output after restore:</strong>
+        <div class="code-block" style="margin-top:8px;border-left:3px solid var(--green);">
+          <pre style="color:#7ee787;">klio-server-klio-0      1/1   Running   0   3m
+my-postgres-cluster-1   2/2   Running   0   3m
+my-postgres-cluster-2   2/2   Running   0   3m
+
+STATUS: Cluster in healthy state.</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Troubleshooting -->
+  <div class="section">
+    <div class="section-label">Troubleshooting</div>
+    <h2>🔧 Common issues</h2>
+    <p class="sub" style="margin-bottom:16px;">Click to expand.</p>
+
+    <div class="trouble open">
+      <div class="trouble-q" onclick="tog(this)">
+        🔴 Restore fails — "Expected artifact cnpg-snapshot.tar not found"
+        <span class="arr">▾</span>
+      </div>
+      <div class="trouble-a">
+        The GitHub folder is missing the snapshot file — this usually means Git LFS was not set up when the backup was pushed. Re-run the backup on the source machine (the script initialises LFS automatically):
+        <div class="code-block" style="margin-top:8px;">
+          <div class="code-top"><span>Re-run backup on source machine</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>./docker-cluster-backup.sh</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="trouble">
+      <div class="trouble-q" onclick="tog(this)">
+        🔴 Backup fails — "GitHub token is invalid or expired"
+        <span class="arr">▾</span>
+      </div>
+      <div class="trouble-a">
+        Your Personal Access Token has expired or was entered incorrectly. Create a new one with <code>repo</code> scope at <a href="https://github.com/settings/tokens" style="color:var(--accent);">github.com/settings/tokens</a>. Re-run the backup and paste the new token at the hidden prompt.
+        <br/><br/>
+        <strong style="color:var(--red);">Never share your PAT in a chat or commit it to a file in the repo</strong> — if accidentally exposed, revoke it immediately at the link above.
+        <br/><br/>
+        To avoid re-entering the token each time, add to your shell profile (<code>~/.zshrc</code> or <code>~/.bash_profile</code>):
+        <div class="code-block" style="margin-top:8px;">
+          <div class="code-top"><span>~/.zshrc</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>export GITHUB_TOKEN=ghp_your_token_here</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="trouble">
+      <div class="trouble-q" onclick="tog(this)">
+        🔴 git-lfs not found during backup or restore
+        <span class="arr">▾</span>
+      </div>
+      <div class="trouble-a">
+        Git LFS is required to handle the snapshot tar file. Install it with:
+        <div class="code-block" style="margin-top:8px;">
+          <div class="code-top"><span>macOS</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>brew install git-lfs && git lfs install</pre>
+        </div>
+        <div class="code-block" style="margin-top:8px;">
+          <div class="code-top"><span>Ubuntu / Debian</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>sudo apt-get install git-lfs && git lfs install</pre>
+        </div>
+        After installing, re-run the backup or restore script.
+      </div>
+    </div>
+
+    <div class="trouble">
+      <div class="trouble-q" onclick="tog(this)">
+        🟡 Pods stuck in PodInitializing after restore
+        <span class="arr">▾</span>
+      </div>
+      <div class="trouble-a">
+        The PostgreSQL image is still pulling from <code>ghcr.io</code>. Wait 5–10 minutes then verify:
+        <div class="code-block" style="margin-top:8px;">
+          <div class="code-top"><span>Check pod status</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>kubectl get pods --context kind-&lt;cluster&gt; --all-namespaces</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="trouble">
+      <div class="trouble-q" onclick="tog(this)">
+        🔴 kind cluster name conflict on restore
+        <span class="arr">▾</span>
+      </div>
+      <div class="trouble-a">
+        The script detects this and offers to delete the existing cluster. Or use the rename option at the restore prompt to restore under a different name. To delete manually:
+        <div class="code-block" style="margin-top:8px;">
+          <div class="code-top"><span>Terminal</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>kind delete cluster --name &lt;cluster&gt;</pre>
+        </div>
+        Then re-run <code>docker-cluster-restore.sh</code>.
+      </div>
+    </div>
+
+    <div class="trouble">
+      <div class="trouble-q" onclick="tog(this)">
+        🟡 Restore asks for operator version manually — auto-detection failed
+        <span class="arr">▾</span>
+      </div>
+      <div class="trouble-a">
+        The <code>cnpg-version.txt</code> or <code>operator-namespace.txt</code> files are missing from the GitHub folder. This means the backup was created by an older version of the script. Re-run the backup on the source machine to get a complete backup folder.
+        <div class="code-block" style="margin-top:8px;">
+          <div class="code-top"><span>Source machine</span><button class="copy-btn" onclick="cp(this)">Copy</button></div>
+          <pre>./docker-cluster-backup.sh</pre>
+        </div>
+        Supported namespace values: <code>cnpg-system</code>, <code>postgresql-operator-system</code>, <code>pgd-operator-system</code>
+      </div>
+    </div>
+
+    <div class="trouble">
+      <div class="trouble-q" onclick="tog(this)">
+        🟡 No PostgreSQL databases after restore
+        <span class="arr">▾</span>
+      </div>
+      <div class="trouble-a">
+        The <code>cnpg-db-blueprints.yaml</code> file was empty or missing during backup. This file contains all CNPG/CNP/PGD4K CRDs. Re-run <code>docker-cluster-backup.sh</code> on the source machine to regenerate the complete backup folder.
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align:center;padding-top:16px;color:var(--dim);font-size:12px;">
+    <div style="margin-bottom:8px;">
+      <a href="https://github.com/erswapnil/Kind-Cluster-Backup-and-restore" style="color:var(--accent);text-decoration:none;">
+        📁 github.com/erswapnil/Kind-Cluster-Backup-and-restore
+      </a>
+    </div>
+    Kind Cluster Automation Runbook
+  </div>
+
+</div>
+
+<script>
+function cp(btn) {
+  const pre = btn.closest('.code-block').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(() => {
+    btn.textContent = 'Copied!'; btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 2000);
+  });
+}
+function tog(q) {
+  q.closest('.trouble').classList.toggle('open');
+}
+</script>
+</body>
+</html>
