@@ -122,19 +122,23 @@ OPERATOR_TYPE=""
 
 detect_version_from_ns() {
   local ns="$1"
+  # Check namespace exists first
+  kubectl get ns "${ns}" --context "${CONTEXT}" &>/dev/null 2>&1 || return
+
   local deploy_count
   deploy_count=$(kubectl get deployment -n "${ns}" --context "${CONTEXT}" \
     --no-headers 2>/dev/null | wc -l | tr -d ' ')
   [[ "${deploy_count}" -eq 0 ]] && return
 
   local ver
+  # Try operator-specific image keywords first (broad list covers all variants)
   ver=$(kubectl get deployment -n "${ns}" --context "${CONTEXT}" \
     -o jsonpath='{range .items[*]}{.spec.template.spec.containers[*].image}{"\n"}{end}' \
     2>/dev/null \
-    | grep -i -E "cloudnative-pg|edb-postgres|cnpg|pgd|barman" \
+    | grep -i -E "cloudnative-pg|cloud-native-pg|edb-postgres|enterprisedb|cnpg|pgd|barman" \
     | grep -oE ':[0-9]+\.[0-9]+\.[0-9]+' | tr -d ':' | head -1 || true)
 
-  # Fallback: any semver from any image in this namespace
+  # Fallback: any semver from ANY image in this namespace (catches all image naming schemes)
   if [[ -z "${ver}" ]]; then
     ver=$(kubectl get deployment -n "${ns}" --context "${CONTEXT}" \
       -o jsonpath='{range .items[*]}{.spec.template.spec.containers[*].image}{"\n"}{end}' \
@@ -153,7 +157,7 @@ for ns_candidate in "cnpg-system" "postgresql-operator-system" "pgd-operator-sys
   fi
 done
 
-# Fallback: scan all namespaces
+# Fallback: scan all namespaces for any operator-related deployment
 if [[ -z "${CNPG_VERSION}" ]]; then
   info "Scanning all namespaces for operator deployments..."
   while IFS= read -r line; do
@@ -167,7 +171,9 @@ if [[ -z "${CNPG_VERSION}" ]]; then
     fi
   done < <(kubectl get deployment --all-namespaces --context "${CONTEXT}" \
     -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.spec.template.spec.containers[*].image}{"\n"}{end}' \
-    2>/dev/null | grep -i -E "cloudnative-pg|edb-postgres|cnpg|pgd|barman|operator" || true)
+    2>/dev/null \
+    | grep -i -E "cloudnative-pg|cloud-native-pg|edb-postgres|enterprisedb|cnpg|pgd|barman|operator" \
+    || true)
 fi
 
 if [[ -n "${CNPG_VERSION}" ]]; then
@@ -175,17 +181,35 @@ if [[ -n "${CNPG_VERSION}" ]]; then
     "cnpg-system")                 OPERATOR_TYPE="Community CloudNativePG" ;;
     "postgresql-operator-system")  OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)" ;;
     "pgd-operator-system")         OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)" ;;
-    *)                             OPERATOR_TYPE="Unknown operator" ;;
+    *)                             OPERATOR_TYPE="Unknown operator in ns '${OPERATOR_NS}'" ;;
   esac
   success "Operator   : ${OPERATOR_TYPE}"
   success "Namespace  : ${OPERATOR_NS}"
   success "Version    : ${CNPG_VERSION}"
 else
-  warn "Could not auto-detect operator. Defaulting to cnpg-system."
-  OPERATOR_NS="cnpg-system"
-  OPERATOR_TYPE="Community CloudNativePG"
-  read -rp "Enter operator version manually (e.g. 1.28.0): " CNPG_VERSION
+  # Manual fallback — ask both operator type AND version
+  warn "Could not auto-detect operator type."
+  echo ""
+  echo "  Select operator type:"
+  echo "    1) Community CloudNativePG         (namespace: cnpg-system)"
+  echo "    2) EDB Postgres for Kubernetes/CNP (namespace: postgresql-operator-system)"
+  echo "    3) EDB Postgres Distributed PGD4K  (namespace: pgd-operator-system)"
+  echo ""
+  while true; do
+    read -rp "  Enter 1, 2, or 3: " OP_CHOICE
+    case "${OP_CHOICE}" in
+      1) OPERATOR_NS="cnpg-system";               OPERATOR_TYPE="Community CloudNativePG";                  break ;;
+      2) OPERATOR_NS="postgresql-operator-system"; OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)";    break ;;
+      3) OPERATOR_NS="pgd-operator-system";        OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)";        break ;;
+      *) warn "Enter 1, 2, or 3." ;;
+    esac
+  done
+  echo ""
+  read -rp "  Enter operator version (e.g. 1.28.0): " CNPG_VERSION
   [[ -z "${CNPG_VERSION}" ]] && error "Operator version is required."
+  success "Operator   : ${OPERATOR_TYPE}"
+  success "Namespace  : ${OPERATOR_NS}"
+  success "Version    : ${CNPG_VERSION}"
 fi
 
 # Detect cert-manager version (saved to metadata; used by restore for PGD clusters)
@@ -261,10 +285,36 @@ info "Working directory: ${WORK_DIR}"
 # ── Step 4: Docker commit + save ──────────────────────────────────────────────
 step "Step 4 · Snapshot control-plane container"
 info "docker commit ${CONTAINER_ID} → ${CLUSTER_NAME}-snapshot:v1"
-docker commit "${CONTAINER_ID}" "${CLUSTER_NAME}-snapshot:v1"
+# --pause=false keeps the API server running during commit so Step 5 kubectl works
+docker commit --pause=false "${CONTAINER_ID}" "${CLUSTER_NAME}-snapshot:v1"
 info "docker save → cnpg-snapshot.tar.gz  (compressing with gzip — may take a few minutes)..."
 docker save "${CLUSTER_NAME}-snapshot:v1" | gzip > "${WORK_DIR}/cnpg-snapshot.tar.gz"
 success "Snapshot saved: $(du -sh "${WORK_DIR}/cnpg-snapshot.tar.gz" | cut -f1)  (compressed)"
+
+# Wait for API server to be responsive before kubectl export
+info "Waiting for Kubernetes API server to be ready..."
+API_READY=0
+for i in $(seq 1 30); do
+  if kubectl --context "${CONTEXT}" get nodes &>/dev/null 2>&1; then
+    API_READY=1
+    break
+  fi
+  sleep 2
+done
+if [[ "${API_READY}" -eq 0 ]]; then
+  warn "API server not responding after 60s — trying to restart kind cluster networking..."
+  docker restart "${CONTAINER_ID}" &>/dev/null || true
+  sleep 10
+  for i in $(seq 1 15); do
+    if kubectl --context "${CONTEXT}" get nodes &>/dev/null 2>&1; then
+      API_READY=1
+      break
+    fi
+    sleep 4
+  done
+  [[ "${API_READY}" -eq 0 ]] && error "Kubernetes API server is unreachable. Try: kubectl cluster-info --context ${CONTEXT}"
+fi
+success "API server is responsive."
 
 # ── Step 5: Export Kubernetes resources ───────────────────────────────────────
 step "Step 5 · Export Kubernetes resources"
