@@ -122,13 +122,13 @@ OPERATOR_TYPE=""
 
 detect_version_from_ns() {
   local ns="$1"
-  # Check namespace exists first
-  kubectl get ns "${ns}" --context "${CONTEXT}" &>/dev/null 2>&1 || return
+  # Check namespace exists first — echo "" and return 0 so set -e doesn't fire in caller's $()
+  kubectl get ns "${ns}" --context "${CONTEXT}" &>/dev/null 2>&1 || { echo ""; return 0; }
 
   local deploy_count
   deploy_count=$(kubectl get deployment -n "${ns}" --context "${CONTEXT}" \
-    --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  [[ "${deploy_count}" -eq 0 ]] && return
+    --no-headers 2>/dev/null | wc -l | tr -d ' ') || true
+  [[ "${deploy_count}" -eq 0 ]] && { echo ""; return 0; }
 
   local ver
   # Try operator-specific image keywords first (broad list covers all variants)
@@ -149,7 +149,7 @@ detect_version_from_ns() {
 
 for ns_candidate in "cnpg-system" "postgresql-operator-system" "pgd-operator-system"; do
   info "Checking ${ns_candidate}..."
-  detected=$(detect_version_from_ns "${ns_candidate}")
+  detected=$(detect_version_from_ns "${ns_candidate}") || true
   if [[ -n "${detected}" ]]; then
     CNPG_VERSION="${detected}"
     OPERATOR_NS="${ns_candidate}"
