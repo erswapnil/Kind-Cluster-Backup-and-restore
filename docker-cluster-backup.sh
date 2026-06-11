@@ -132,15 +132,17 @@ OPERATOR_IMAGE=""
 # ── Method 1: CRD-based detection (most reliable — CRDs always present) ──────
 info "Detecting operator type via CRDs..."
 
-if kubectl get crd clusters.postgresql.cnpg.io --context "${CONTEXT}" &>/dev/null 2>&1; then
-  OPERATOR_NS="cnpg-system"
-  OPERATOR_TYPE="Community CloudNativePG"
+# Check PGD4K FIRST — PGD4K clusters also have the CNP CRD installed,
+# so if we checked CNP first we'd misidentify a PGD4K cluster as CNP.
+if kubectl get crd pgdgroups.pgd.k8s.enterprisedb.io --context "${CONTEXT}" &>/dev/null 2>&1; then
+  OPERATOR_NS="pgd-operator-system"
+  OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)"
 elif kubectl get crd clusters.postgresql.k8s.enterprisedb.io --context "${CONTEXT}" &>/dev/null 2>&1; then
   OPERATOR_NS="postgresql-operator-system"
   OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)"
-elif kubectl get crd pgdgroups.pgd.k8s.enterprisedb.io --context "${CONTEXT}" &>/dev/null 2>&1; then
-  OPERATOR_NS="pgd-operator-system"
-  OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)"
+elif kubectl get crd clusters.postgresql.cnpg.io --context "${CONTEXT}" &>/dev/null 2>&1; then
+  OPERATOR_NS="cnpg-system"
+  OPERATOR_TYPE="Community CloudNativePG"
 fi
 
 # ── Method 2: Extract version from operator pod images ────────────────────────
