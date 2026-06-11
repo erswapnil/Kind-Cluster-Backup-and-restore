@@ -62,17 +62,6 @@ for cmd in curl python3 docker kind kubectl git; do
 done
 docker info &>/dev/null 2>&1 || error "Docker Desktop is not running. Start it first."
 
-# Install git-lfs if needed (required to download snapshot tar from LFS)
-if ! git lfs version &>/dev/null 2>&1; then
-  warn "git-lfs not found. Installing via Homebrew..."
-  if command -v brew &>/dev/null; then
-    brew install git-lfs
-    git lfs install --system
-    success "git-lfs installed."
-  else
-    error "git-lfs is required but not installed. Install it from: https://git-lfs.com"
-  fi
-fi
 success "All pre-flight checks passed."
 
 # ── Step 1: GitHub repo details ───────────────────────────────────────────────
@@ -306,7 +295,8 @@ mkdir -p "${BACKUP_DIR}"
 cp "${SNAPSHOT_DEST}" "${BACKUP_DIR}/cnpg-snapshot.tar.gz"
 
 for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
-          cluster-name.txt operator-namespace.txt cert-manager-version.txt; do
+          cluster-name.txt operator-namespace.txt operator-type.txt \
+          operator-image.txt cert-manager-version.txt; do
   if [[ -n "${ASSET_URLS[${f}]:-}" ]]; then
     download_asset "${f}" "${BACKUP_DIR}/${f}" || warn "Could not download ${f}."
   fi
@@ -333,6 +323,8 @@ step "Step 4 · Reading cluster metadata"
 CLUSTER_NAME="${CLUSTER_FOLDER}"
 CNPG_VERSION=""
 OPERATOR_NS=""
+OPERATOR_TYPE=""
+OPERATOR_IMAGE=""
 
 # Priority 1: metadata files written by docker-cluster-backup.sh
 if [[ -f "${BACKUP_SUBDIR}/cnpg-version.txt" ]]; then
@@ -340,7 +332,15 @@ if [[ -f "${BACKUP_SUBDIR}/cnpg-version.txt" ]]; then
 fi
 if [[ -f "${BACKUP_SUBDIR}/operator-namespace.txt" ]]; then
   OPERATOR_NS=$(cat "${BACKUP_SUBDIR}/operator-namespace.txt" | tr -d '[:space:]')
-  info "Operator namespace: ${OPERATOR_NS} (from operator-namespace.txt)"
+  info "Operator namespace : ${OPERATOR_NS} (from metadata)"
+fi
+if [[ -f "${BACKUP_SUBDIR}/operator-type.txt" ]]; then
+  OPERATOR_TYPE=$(cat "${BACKUP_SUBDIR}/operator-type.txt" | tr -d '\n')
+  info "Operator type      : ${OPERATOR_TYPE} (from metadata)"
+fi
+if [[ -f "${BACKUP_SUBDIR}/operator-image.txt" ]]; then
+  OPERATOR_IMAGE=$(cat "${BACKUP_SUBDIR}/operator-image.txt" | tr -d '[:space:]')
+  info "Operator image     : ${OPERATOR_IMAGE} (from metadata)"
 fi
 
 # Priority 2: scan YAML files for known operator namespaces (for older backups without metadata)

@@ -106,12 +106,31 @@ CLUSTER_NAME=$(echo "${CLUSTERS}" | sed -n "${CHOICE}p" | tr -d '[:space:]')
 CONTEXT="kind-${CLUSTER_NAME}"
 success "Selected: ${CLUSTER_NAME}  (kubectl context: ${CONTEXT})"
 
-# Find control-plane container
-CONTAINER_ID=$(docker ps -a \
+# Find control-plane container (must be RUNNING, not just stopped)
+CONTAINER_ID=$(docker ps \
   --filter "name=${CLUSTER_NAME}-control-plane" \
+  --filter "status=running" \
   --format "{{.ID}}" | head -1)
-[[ -z "${CONTAINER_ID}" ]] && error "Control-plane container for '${CLUSTER_NAME}' not found. Is the cluster running?"
-success "Control-plane container: ${CONTAINER_ID}"
+
+if [[ -z "${CONTAINER_ID}" ]]; then
+  # Check if it exists but is stopped
+  STOPPED_ID=$(docker ps -a \
+    --filter "name=${CLUSTER_NAME}-control-plane" \
+    --format "{{.ID}}" | head -1)
+  if [[ -n "${STOPPED_ID}" ]]; then
+    echo ""
+    warn "Cluster '${CLUSTER_NAME}' container exists but is STOPPED."
+    echo ""
+    echo "  Start it with:"
+    echo "    docker start ${CLUSTER_NAME}-control-plane"
+    echo "    sleep 20 && kubectl get nodes --context kind-${CLUSTER_NAME}"
+    echo ""
+    error "Start the cluster first, then re-run this backup script."
+  else
+    error "Control-plane container for '${CLUSTER_NAME}' not found. Is the cluster running?"
+  fi
+fi
+success "Control-plane container: ${CONTAINER_ID} (running)"
 
 # ── Step 2: Auto-detect operator and version ──────────────────────────────────
 step "Step 2 · Auto-detecting operator (CNPG / EDB CNP / PGD4K)"
@@ -140,20 +159,39 @@ if [[ -n "${OPERATOR_NS}" ]]; then
   info "Operator namespace detected: ${OPERATOR_NS}"
   info "Extracting version from operator pods..."
 
-  # Try pods first (most accurate — running image tag = actual version)
-  OPERATOR_IMAGE=$(kubectl get pods -n "${OPERATOR_NS}" --context "${CONTEXT}" \
-    -o jsonpath='{range .items[*]}{.spec.containers[*].image}{"\n"}{end}' \
-    2>/dev/null | grep -v "^$" | head -1 || true)
+  # Get all images from pods in the operator namespace (one image per line)
+  ALL_IMAGES=$(kubectl get pods -n "${OPERATOR_NS}" --context "${CONTEXT}" \
+    -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
+    2>/dev/null | grep -v "^$" || true)
 
+  # Prefer the operator-specific image (skip sidecars like kube-rbac-proxy)
+  OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
+    | grep -i -E "edb-postgres-for-cloudnativepg|cloudnative-pg|cloud-native-pg|cnpg|pgd|enterprisedb" \
+    | head -1 || true)
+
+  # Fallback: use any image that has a semver tag
+  if [[ -z "${OPERATOR_IMAGE}" ]]; then
+    OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
+      | grep -oE '^[^:]+:[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+  fi
+
+  # Extract version from the chosen image
   if [[ -n "${OPERATOR_IMAGE}" ]]; then
     CNPG_VERSION=$(echo "${OPERATOR_IMAGE}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
   fi
 
-  # If pods gave nothing, try deployments
+  # If pods gave nothing, try deployment spec (image may not be running yet)
   if [[ -z "${CNPG_VERSION}" ]]; then
-    OPERATOR_IMAGE=$(kubectl get deployment -n "${OPERATOR_NS}" --context "${CONTEXT}" \
-      -o jsonpath='{range .items[*]}{.spec.template.spec.containers[*].image}{"\n"}{end}' \
-      2>/dev/null | grep -v "^$" | head -1 || true)
+    info "No running pods found — checking deployment spec..."
+    ALL_IMAGES=$(kubectl get deployment -n "${OPERATOR_NS}" --context "${CONTEXT}" \
+      -o jsonpath='{range .items[*]}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}' \
+      2>/dev/null | grep -v "^$" || true)
+    OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
+      | grep -i -E "edb-postgres-for-cloudnativepg|cloudnative-pg|cloud-native-pg|cnpg|pgd|enterprisedb" \
+      | head -1 || true)
+    if [[ -z "${OPERATOR_IMAGE}" ]]; then
+      OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" | head -1 || true)
+    fi
     [[ -n "${OPERATOR_IMAGE}" ]] && \
       CNPG_VERSION=$(echo "${OPERATOR_IMAGE}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
   fi
@@ -175,7 +213,7 @@ if [[ -z "${OPERATOR_NS}" ]]; then
   done < <(kubectl get pods --all-namespaces --context "${CONTEXT}" \
     -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.spec.containers[*].image}{"\n"}{end}' \
     2>/dev/null \
-    | grep -i -E "cloudnative-pg|cloud-native-pg|edb-postgres|enterprisedb|cnpg|pgd|barman" \
+    | grep -i -E "cloudnative-pg|cloud-native-pg|edb-postgres-for-cloudnativepg|edb-postgres-for-cloudnativepg-global-cluster|enterprisedb|cnpg|pgd|barman" \
     || true)
   if [[ -n "${OPERATOR_NS}" ]]; then
     case "${OPERATOR_NS}" in
@@ -385,9 +423,11 @@ else
 fi
 
 # ── Write metadata files ──────────────────────────────────────────────────────
-echo "${CNPG_VERSION}"  > "${WORK_DIR}/cnpg-version.txt"
+echo "${CNPG_VERSION}"   > "${WORK_DIR}/cnpg-version.txt"
 echo "${CLUSTER_NAME}"  > "${WORK_DIR}/cluster-name.txt"
 echo "${OPERATOR_NS}"   > "${WORK_DIR}/operator-namespace.txt"
+echo "${OPERATOR_TYPE}" > "${WORK_DIR}/operator-type.txt"
+[[ -n "${OPERATOR_IMAGE}" ]]       && echo "${OPERATOR_IMAGE}"       > "${WORK_DIR}/operator-image.txt"
 [[ -n "${CERT_MANAGER_VERSION}" ]] && echo "${CERT_MANAGER_VERSION}" > "${WORK_DIR}/cert-manager-version.txt"
 success "Metadata files written."
 
@@ -436,23 +476,36 @@ UPLOAD_BASE=$(echo "${REL_OUT}" | tail -1)
 success "Release created: ${RELEASE_TAG} (ID: ${RELEASE_ID})"
 info "View at: https://github.com/${GITHUB_USER}/${GITHUB_REPO}/releases/tag/${RELEASE_TAG}"
 
-# ── Upload helper (with retry) ───────────────────────────────────────────────
+# ── Upload helper (with retry + live progress bar) ───────────────────────────
 upload_asset() {
   local file="$1" name="$2"
-  local size_mb=$(( $(wc -c < "${file}" | tr -d ' ') / 1024 / 1024 ))
+  local size_bytes size_mb
+  size_bytes=$(wc -c < "${file}" | tr -d ' ')
+  size_mb=$(( size_bytes / 1024 / 1024 ))
+  local RESP_FILE="${WORK_DIR}/.upload_resp"
+
   for attempt in 1 2 3; do
     info "Uploading ${name} (${size_mb} MB, attempt ${attempt}/3)..."
-    HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+    echo ""
+    # -#  → progress bar goes to stderr (terminal directly via 2>/dev/tty)
+    # -o  → response body saved to file (not mixed with HTTP code)
+    # -w  → HTTP code captured to stdout only
+    HTTP=$(curl -# \
+      -o "${RESP_FILE}" \
+      -w "%{http_code}" \
       -H "Authorization: token ${GITHUB_TOKEN}" \
       -H "Content-Type: application/octet-stream" \
       --max-time 7200 \
       --data-binary @"${file}" \
-      "${UPLOAD_BASE}?name=${name}" 2>/dev/null || echo "000")
+      "${UPLOAD_BASE}?name=${name}" 2>/dev/tty) || HTTP="000"
+    echo ""
     if [[ "${HTTP}" == "201" ]]; then
-      success "${name} uploaded."
+      success "${name} uploaded successfully."
+      rm -f "${RESP_FILE}"
       return 0
     elif [[ "${HTTP}" == "422" ]]; then
       warn "${name} already exists in this release — skipping."
+      rm -f "${RESP_FILE}"
       return 0
     fi
     warn "Attempt ${attempt}/3 failed (HTTP ${HTTP}). Retrying in 15s..."
@@ -488,7 +541,8 @@ fi
 
 # ── Upload metadata files ────────────────────────────────────────────────────
 for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
-          cluster-name.txt operator-namespace.txt cert-manager-version.txt; do
+          cluster-name.txt operator-namespace.txt operator-type.txt \
+          operator-image.txt cert-manager-version.txt; do
   [[ -f "${WORK_DIR}/${f}" ]] && upload_asset "${WORK_DIR}/${f}" "${f}"
 done
 
@@ -508,10 +562,13 @@ echo -e "  ${BOLD}Files uploaded to GitHub Release:${NC}"
 echo -e "  ${GREEN}✓${NC}  cnpg-snapshot.tar.gz      ${TAR_SIZE}"
 echo -e "  ${GREEN}✓${NC}  cnp-cluster-config.yaml   ${CFG_SIZE}"
 echo -e "  ${GREEN}✓${NC}  cnpg-db-blueprints.yaml   ${BP_SIZE}"
-echo -e "  ${GREEN}✓${NC}  cnpg-version.txt"
-echo -e "  ${GREEN}✓${NC}  operator-namespace.txt"
+echo -e "  ${GREEN}✓${NC}  cnpg-version.txt          (${CNPG_VERSION})"
+echo -e "  ${GREEN}✓${NC}  operator-namespace.txt    (${OPERATOR_NS})"
+echo -e "  ${GREEN}✓${NC}  operator-type.txt         (${OPERATOR_TYPE})"
+[[ -n "${OPERATOR_IMAGE}" ]] && \
+  echo -e "  ${GREEN}✓${NC}  operator-image.txt        (${OPERATOR_IMAGE})"
 [[ -n "${CERT_MANAGER_VERSION}" ]] && \
-  echo -e "  ${GREEN}✓${NC}  cert-manager-version.txt"
+  echo -e "  ${GREEN}✓${NC}  cert-manager-version.txt  (${CERT_MANAGER_VERSION})"
 echo ""
 echo -e "  ${BOLD}To restore this cluster on any machine:${NC}"
 echo -e "  ${YELLOW}curl -fsSL https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/docker-cluster-restore.sh \\"
