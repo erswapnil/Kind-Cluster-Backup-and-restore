@@ -105,183 +105,223 @@ if [[ "${HTTP_CODE}" != "200" ]]; then
 fi
 success "Repo ${GITHUB_USER}/${GITHUB_REPO} is accessible."
 
-# ── Step 2: List available clusters from GitHub ───────────────────────────────
-step "Step 2 · Available clusters in GitHub repo"
+# ── Step 2: List available backups from GitHub Releases ───────────────────────
+step "Step 2 · Available cluster backups (GitHub Releases)"
 
-info "Fetching cluster folder list..."
-CONTENTS=$(curl -s \
-  -H "Accept: application/vnd.github+json" \
-  -H "${GH_AUTH_HEADER}" \
-  "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/")
+WORK_DIR="$(mktemp -d -t kind-restore-XXXXXX)"
 
-CLUSTER_LIST=$(echo "${CONTENTS}" | python3 -c "
-import sys, json
-items = json.load(sys.stdin)
-folders = [i['name'] for i in items if i['type'] == 'dir']
-for f in folders:
-    print(f)
-" 2>/dev/null || true)
+LIST_PY="${WORK_DIR}/list_releases.py"
+cat > "${LIST_PY}" << 'PYEOF'
+import sys, json, re
+try:
+    from urllib.request import urlopen, Request
+    from urllib.error import HTTPError
+except ImportError:
+    sys.exit(1)
 
-if [[ -z "${CLUSTER_LIST}" ]]; then
-  error "No cluster folders found in ${GITHUB_USER}/${GITHUB_REPO}. Run docker-cluster-backup.sh first."
+owner = sys.argv[1]
+repo  = sys.argv[2]
+token = sys.argv[3] if len(sys.argv) > 3 else ""
+
+url = f"https://api.github.com/repos/{owner}/{repo}/releases?per_page=100"
+headers = {"Accept": "application/vnd.github+json"}
+if token:
+    headers["Authorization"] = f"token {token}"
+
+try:
+    with urlopen(Request(url, headers=headers)) as r:
+        releases = json.load(r)
+except HTTPError as e:
+    sys.stderr.write(f"HTTP {e.code}\n")
+    sys.exit(1)
+
+rows = []
+for rel in releases:
+    tag = rel.get("tag_name", "")
+    if not tag.startswith("backup-"):
+        continue
+    assets = {a["name"]: a["browser_download_url"] for a in rel.get("assets", [])}
+    has_snap = "cnpg-snapshot.tar.gz" in assets or any(n.startswith("cnpg-snapshot.part.") for n in assets)
+    has_cfg  = "cnp-cluster-config.yaml" in assets
+    has_bp   = "cnpg-db-blueprints.yaml" in assets
+    if not has_snap:
+        continue
+
+    # Operator label from namespace file
+    ns_url = assets.get("operator-namespace.txt", "")
+    op = ""
+    if ns_url:
+        try:
+            with urlopen(ns_url, timeout=5) as r2:
+                ns = r2.read().decode().strip()
+            op = {"cnpg-system":"CNPG","postgresql-operator-system":"EDB-CNP","pgd-operator-system":"PGD4K"}.get(ns, ns)
+        except:
+            pass
+
+    # Cluster name: strip backup- prefix and YYYYMMDD-HHMMSS suffix
+    cluster = tag[len("backup-"):]
+    m = re.match(r"^(.*)-(\d{8})-(\d{6})$", cluster)
+    if m:
+        cluster = m.group(1)
+
+    cfg_str = f"yes ({op})" if has_cfg else "missing"
+    bp_str  = "yes" if has_bp else "missing"
+    rows.append(f"{tag}|{cluster}|yes|{cfg_str}|{bp_str}")
+
+print("\n".join(rows))
+PYEOF
+
+info "Fetching backup list from GitHub Releases..."
+RELEASE_ROWS=$(python3 "${LIST_PY}" "${GITHUB_USER}" "${GITHUB_REPO}" "${GITHUB_TOKEN:-}" 2>/dev/null || true)
+
+if [[ -z "${RELEASE_ROWS}" ]]; then
+  error "No backups found in GitHub Releases for ${GITHUB_USER}/${GITHUB_REPO}. Run docker-cluster-backup.sh first."
 fi
 
 echo ""
 printf "  ${BOLD}%-4s %-25s %-12s %-22s %s${NC}\n" "#" "CLUSTER NAME" "SNAPSHOT" "K8S CONFIG" "DB BLUEPRINTS"
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 
-# macOS bash 3.2 compatible — no mapfile
-CLUSTERS=()
-while IFS= read -r line; do
-  [[ -n "${line}" ]] && CLUSTERS+=("${line}")
-done <<< "${CLUSTER_LIST}"
-
+VALID_TAGS=()
 VALID_CLUSTERS=()
-
-for i in "${!CLUSTERS[@]}"; do
-  FOLDER="${CLUSTERS[$i]}"
-  FILES=$(curl -s \
-    -H "Accept: application/vnd.github+json" \
-    -H "${GH_AUTH_HEADER}" \
-    "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${FOLDER}" \
-    | python3 -c "
-import sys, json
-try:
-    items = json.load(sys.stdin)
-    names = {i['name'] for i in items if i['type'] == 'file'}
-    # Also detect operator type from operator-namespace.txt if present
-    op = ''
-    for item in items:
-        if item['name'] == 'operator-namespace.txt':
-            import urllib.request
-            try:
-                url = item.get('download_url', '')
-                if url:
-                    resp = urllib.request.urlopen(url, timeout=5)
-                    op = resp.read().decode().strip()
-            except:
-                pass
-    op_label = {'cnpg-system': 'CNPG', 'postgresql-operator-system': 'EDB-CNP', 'pgd-operator-system': 'PGD4K'}.get(op, op or '?')
-    tar = 'yes' if 'cnpg-snapshot.tar.gz' in names else 'missing'
-    cfg = 'yes (' + op_label + ')' if 'cnp-cluster-config.yaml' in names else 'missing'
-    bp  = 'yes' if 'cnpg-db-blueprints.yaml' in names else 'missing'
-    print(tar + '|' + cfg + '|' + bp)
-except:
-    print('error|error|error')
-" 2>/dev/null)
-
-  TAR_STATUS=$(echo "${FILES}" | cut -d'|' -f1)
-  CFG_STATUS=$(echo "${FILES}" | cut -d'|' -f2)
-  BP_STATUS=$(echo "${FILES}"  | cut -d'|' -f3)
-
-  if [[ "${TAR_STATUS}" == "yes" ]]; then
-    VALID_CLUSTERS+=("${FOLDER}")
-    NUM="${#VALID_CLUSTERS[@]}"
-    printf "  ${BOLD}%-4s${NC} ${GREEN}%-25s${NC} %-12s %-22s %s\n" \
-      "${NUM}" "${FOLDER}" "${TAR_STATUS}" "${CFG_STATUS}" "${BP_STATUS}"
-  else
-    printf "  ${BOLD}%-4s${NC} ${YELLOW}%-25s${NC} %-12s %-22s %s ${RED}(incomplete — skipped)${NC}\n" \
-      "-" "${FOLDER}" "${TAR_STATUS}" "${CFG_STATUS}" "${BP_STATUS}"
-  fi
-done
+while IFS= read -r row; do
+  [[ -z "${row}" ]] && continue
+  TAG=$(echo "${row}"    | cut -d'|' -f1)
+  CLUSTER=$(echo "${row}" | cut -d'|' -f2)
+  SNAP=$(echo "${row}"   | cut -d'|' -f3)
+  CFG=$(echo "${row}"    | cut -d'|' -f4)
+  BP=$(echo "${row}"     | cut -d'|' -f5)
+  VALID_TAGS+=("${TAG}")
+  VALID_CLUSTERS+=("${CLUSTER}")
+  NUM=${#VALID_CLUSTERS[@]}
+  printf "  ${BOLD}%-4s${NC} ${GREEN}%-25s${NC} %-12s %-22s %s\n" "${NUM}" "${CLUSTER}" "${SNAP}" "${CFG}" "${BP}"
+done <<< "${RELEASE_ROWS}"
 echo ""
 
 if [[ ${#VALID_CLUSTERS[@]} -eq 0 ]]; then
-  error "No valid cluster backups found (cnpg-snapshot.tar.gz missing in all folders)."
+  error "No valid backups found."
 fi
 
 while true; do
   read -rp "$(echo -e "${BOLD}Select cluster to restore [1-${#VALID_CLUSTERS[@]}]: ${NC}")" PICK
   if [[ "${PICK}" =~ ^[0-9]+$ ]] && (( PICK >= 1 && PICK <= ${#VALID_CLUSTERS[@]} )); then
     CLUSTER_FOLDER="${VALID_CLUSTERS[$((PICK-1))]}"
+    SELECTED_TAG="${VALID_TAGS[$((PICK-1))]}"
     break
   fi
-  warn "Invalid. Enter a number between 1 and ${#VALID_CLUSTERS[@]}."
+  warn "Invalid selection."
 done
+success "Selected: ${CLUSTER_FOLDER} (release: ${SELECTED_TAG})"
 
-success "Selected: ${CLUSTER_FOLDER}"
+# ── Step 3: Download backup files from GitHub Release ────────────────────────
+step "Step 3 · Download backup files from GitHub Release"
 
-# ── Step 3: Clone repo to download backup files ───────────────────────────────
-step "Step 3 · Download backup files from GitHub  (git clone + LFS)"
-
-GIT_REPO="https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git"
-WORK_DIR="$(mktemp -d -t kind-restore-XXXXXX)"
-
-info "Cloning repo (skipping LFS for speed)..."
-GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 "${GIT_REPO}" "${WORK_DIR}/repo"
-success "Repo cloned."
-
-info "Downloading snapshot file via LFS (${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz — may take several minutes)..."
-
-POINTER_FILE="${WORK_DIR}/repo/${CLUSTER_FOLDER}/cnpg-snapshot.tar.gz"
-SNAPSHOT_DEST="${WORK_DIR}/snapshot.tar.gz"
-
-# Read OID and size from LFS pointer file (clone with SKIP_SMUDGE leaves pointer files)
-LFS_OID=$(grep "^oid sha256:" "${POINTER_FILE}" 2>/dev/null | awk '{print $2}' | cut -d: -f2 || true)
-LFS_SIZE=$(grep "^size " "${POINTER_FILE}" 2>/dev/null | awk '{print $2}' || true)
-
-if [[ -z "${LFS_OID}" ]]; then
-  # Pointer not found — file may already be real content (previously downloaded)
-  info "File appears to already be downloaded (not an LFS pointer)."
-  cp "${POINTER_FILE}" "${SNAPSHOT_DEST}"
-else
-  info "LFS object: sha256:${LFS_OID} size:${LFS_SIZE}"
-  LFS_OK=false
-  BATCH_REQ="${WORK_DIR}/lfs_batch.json"
-  BATCH_RESP="${WORK_DIR}/lfs_resp.json"
-  GET_URL_PY="${WORK_DIR}/get_url.py"
-
-  # Write python helper script (avoids quote nesting in bash 3.2)
-  cat > "${GET_URL_PY}" << 'PYEOF'
+# Python helper: get all asset URLs for a release tag
+GET_ASSETS_PY="${WORK_DIR}/get_assets.py"
+cat > "${GET_ASSETS_PY}" << 'PYEOF'
 import sys, json
-d = json.load(sys.stdin)
-print(d["objects"][0]["actions"]["download"]["href"])
+try:
+    from urllib.request import urlopen, Request
+except ImportError:
+    sys.exit(1)
+
+owner = sys.argv[1]
+repo  = sys.argv[2]
+tag   = sys.argv[3]
+token = sys.argv[4] if len(sys.argv) > 4 else ""
+
+url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
+headers = {"Accept": "application/vnd.github+json"}
+if token:
+    headers["Authorization"] = f"token {token}"
+
+with urlopen(Request(url, headers=headers)) as r:
+    data = json.load(r)
+
+for a in data.get("assets", []):
+    print(a["name"] + "|" + a["browser_download_url"])
 PYEOF
 
-  for lfs_attempt in 1 2 3; do
-    info "Getting fresh download URL from GitHub LFS API (attempt ${lfs_attempt}/3)..."
+ASSETS=$(python3 "${GET_ASSETS_PY}" "${GITHUB_USER}" "${GITHUB_REPO}" \
+  "${SELECTED_TAG}" "${GITHUB_TOKEN:-}" 2>/dev/null || true)
 
-    # Write batch request JSON to file (avoids escaped quotes in bash)
-    printf '{"operation":"download","transfer":["basic"],"objects":[{"oid":"%s","size":%s}]}' \
-      "${LFS_OID}" "${LFS_SIZE}" > "${BATCH_REQ}"
+[[ -z "${ASSETS}" ]] && error "Could not fetch assets for release ${SELECTED_TAG}."
 
-    curl -sf \
-      -H "Accept: application/vnd.git-lfs+json" \
-      -H "Content-Type: application/vnd.git-lfs+json" \
-      -d "@${BATCH_REQ}" \
-      -o "${BATCH_RESP}" \
-      "https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git/info/lfs/objects/batch" || true
+# Build asset URL map
+declare -A ASSET_URLS
+while IFS='|' read -r name url; do
+  ASSET_URLS["${name}"]="${url}"
+done <<< "${ASSETS}"
 
-    DOWNLOAD_URL=$(python3 "${GET_URL_PY}" < "${BATCH_RESP}" 2>/dev/null || true)
-
-    if [[ -z "${DOWNLOAD_URL}" ]]; then
-      warn "Could not get download URL (attempt ${lfs_attempt}/3). Retrying in 10s..."
-      sleep 10
-      continue
+# Download helper
+download_asset() {
+  local name="$1" dest="$2"
+  local url="${ASSET_URLS[${name}]:-}"
+  [[ -z "${url}" ]] && return 1
+  for attempt in 1 2 3; do
+    info "Downloading ${name} (attempt ${attempt}/3)..."
+    if curl -L --max-time 7200 -o "${dest}" "${url}" 2>/dev/null; then
+      success "${name} downloaded: $(du -sh "${dest}" | cut -f1)"
+      return 0
     fi
+    warn "Download attempt ${attempt}/3 failed. Retrying in 10s..."
+    sleep 10
+  done
+  return 1
+}
 
-    info "Downloading snapshot with curl (max 60 min — pre-signed URL valid for 1 hour)..."
-    if curl -L --max-time 3600 \
-       -o "${SNAPSHOT_DEST}" "${DOWNLOAD_URL}"; then
-      LFS_OK=true
-      break
-    fi
-    warn "Download attempt ${lfs_attempt}/3 failed. Retrying with fresh URL in 10s..."
+# Download snapshot (handle split parts)
+SNAPSHOT_DEST="${WORK_DIR}/snapshot.tar.gz"
+if [[ -n "${ASSET_URLS[cnpg-snapshot.tar.gz]:-}" ]]; then
+  download_asset "cnpg-snapshot.tar.gz" "${SNAPSHOT_DEST}" || error "Failed to download snapshot."
+else
+  # Split parts — find them sorted
+  PARTS_COUNT_URL="${ASSET_URLS[snapshot-parts.txt]:-}"
+  if [[ -z "${PARTS_COUNT_URL}" ]]; then
+    error "No snapshot found in release ${SELECTED_TAG}."
+  fi
+  TOTAL_PARTS=$(curl -sf "${PARTS_COUNT_URL}" | tr -d '[:space:]' || echo "0")
+  [[ "${TOTAL_PARTS}" -eq 0 ]] && error "Could not determine snapshot part count."
+  info "Downloading ${TOTAL_PARTS} snapshot chunks..."
+  PARTS_DIR="${WORK_DIR}/parts"
+  mkdir -p "${PARTS_DIR}"
+  # Collect part names from assets (cnpg-snapshot.part.aa, ab, ...)
+  PART_FILES=()
+  for name in "${!ASSET_URLS[@]}"; do
+    [[ "${name}" == cnpg-snapshot.part.* ]] && PART_FILES+=("${name}")
+  done
+  # Sort part files
+  IFS=$'\n' PART_FILES=($(sort <<< "${PART_FILES[*]}")); unset IFS
+  for pf in "${PART_FILES[@]}"; do
+    download_asset "${pf}" "${PARTS_DIR}/${pf}" || error "Failed to download ${pf}."
+  done
+  info "Reassembling snapshot from ${#PART_FILES[@]} parts..."
+  cat "${PARTS_DIR}"/cnpg-snapshot.part.* > "${SNAPSHOT_DEST}"
+  success "Snapshot reassembled: $(du -sh "${SNAPSHOT_DEST}" | cut -f1)"
+fi
+
+# Download metadata files
+BACKUP_DIR="${WORK_DIR}/backup"
+mkdir -p "${BACKUP_DIR}"
+cp "${SNAPSHOT_DEST}" "${BACKUP_DIR}/cnpg-snapshot.tar.gz"
+
+for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
+          cluster-name.txt operator-namespace.txt cert-manager-version.txt; do
+  if [[ -n "${ASSET_URLS[${f}]:-}" ]]; then
+    download_asset "${f}" "${BACKUP_DIR}/${f}" || warn "Could not download ${f}."
+  fi
+done
+success "All backup files downloaded."
+
+# Point BACKUP_SUBDIR to the downloaded files
+BACKUP_SUBDIR="${BACKUP_DIR}"
     sleep 10
   done
   [[ "${LFS_OK}" == "true" ]] || error "Failed to download snapshot after 3 attempts. Check your network connection."
 fi
 
 # Replace the LFS pointer with the actual downloaded file
-cp "${SNAPSHOT_DEST}" "${POINTER_FILE}"
-success "Snapshot downloaded: $(du -sh "${POINTER_FILE}" | cut -f1)"
-
-BACKUP_SUBDIR="${WORK_DIR}/repo/${CLUSTER_FOLDER}"
-if [[ ! -d "${BACKUP_SUBDIR}" ]]; then
-  error "Folder '${CLUSTER_FOLDER}' not found after clone — unexpected error."
-fi
-
-# Artifact file paths
+# Artifact file paths (BACKUP_SUBDIR already set above)
 SNAPSHOT_TAR="${BACKUP_SUBDIR}/cnpg-snapshot.tar.gz"
 CLUSTER_CONFIG="${BACKUP_SUBDIR}/cnp-cluster-config.yaml"
 DB_BLUEPRINTS="${BACKUP_SUBDIR}/cnpg-db-blueprints.yaml"
@@ -686,21 +726,22 @@ success "Database blueprints applied."
 
 # ── Health check ──────────────────────────────────────────────────────────────
 step "Health check — Waiting for database pods"
-info "Waiting up to 3 minutes for pods in 'default' namespace to reach Running state..."
+info "Waiting up to 5 minutes for all pods across all namespaces to reach Running state..."
 info "(First-time restore may pull PostgreSQL images — this can take 5-10 min. Re-run if needed.)"
 
-DEADLINE=$(( $(date +%s) + 180 ))
+DEADLINE=$(( $(date +%s) + 300 ))
 while true; do
   NOT_READY=$(kubectl get pods \
     --context "kind-${CLUSTER_NAME}" \
-    -n default --no-headers 2>/dev/null \
-    | grep -v "Running" | grep -v "Completed" || true)
+    --all-namespaces --no-headers 2>/dev/null \
+    | grep -v "Running" | grep -v "Completed" \
+    | grep -v "kube-system" | grep -v "local-path-storage" || true)
   if [[ -z "${NOT_READY}" ]]; then
-    success "All pods in 'default' namespace are Running."
+    success "All database and operator pods are Running."
     break
   fi
   if [[ $(date +%s) -gt ${DEADLINE} ]]; then
-    warn "Timeout — pods may still be pulling images. Re-run in a few minutes."
+    warn "Timeout — some pods may still be starting. Check status below."
     break
   fi
   info "Pods not yet ready — retrying in 10 s..."
@@ -710,9 +751,9 @@ done
 # ── Final state ───────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}─── Final cluster state ───${NC}"
-kubectl get pods --context "kind-${CLUSTER_NAME}" -n default 2>/dev/null || true
 echo ""
-kubectl get pods --context "kind-${CLUSTER_NAME}" -n "${OPERATOR_NS}" 2>/dev/null || true
+echo -e "  ${BOLD}All namespaces:${NC}"
+kubectl get pods --context "kind-${CLUSTER_NAME}" --all-namespaces 2>/dev/null || true
 echo ""
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -724,7 +765,8 @@ echo ""
 success "Cluster '${CLUSTER_NAME}' is up and running."
 echo ""
 echo -e "  ${BOLD}Useful commands:${NC}"
-echo "  kubectl get pods --context kind-${CLUSTER_NAME} -n default"
+echo "  kubectl get pods --context kind-${CLUSTER_NAME} --all-namespaces"
 echo "  kubectl get pods --context kind-${CLUSTER_NAME} -n ${OPERATOR_NS}"
-echo "  kubectl get clusters.postgresql.cnpg.io --context kind-${CLUSTER_NAME} -n default"
+echo "  kubectl get clusters.postgresql.cnpg.io --context kind-${CLUSTER_NAME} --all-namespaces"
+echo "  kubectl get pgdgroups --context kind-${CLUSTER_NAME} --all-namespaces"
 echo ""

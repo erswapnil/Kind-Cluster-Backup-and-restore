@@ -325,69 +325,109 @@ echo "${OPERATOR_NS}"   > "${WORK_DIR}/operator-namespace.txt"
 [[ -n "${CERT_MANAGER_VERSION}" ]] && echo "${CERT_MANAGER_VERSION}" > "${WORK_DIR}/cert-manager-version.txt"
 success "Metadata files written."
 
-# ── Step 7: Upload to GitHub via git + LFS ────────────────────────────────────
-step "Step 7 · Upload to GitHub  (${GITHUB_USER}/${GITHUB_REPO}/${CLUSTER_NAME}/)"
+# ── Step 7: Upload to GitHub Release (no Git LFS — no bandwidth limits) ──────
+step "Step 7 · Upload to GitHub Release  (${GITHUB_USER}/${GITHUB_REPO})"
 
-REPO_DIR="${WORK_DIR}/repo"
-# Use token in URL — never echoed to screen
-REPO_URL="https://${LOGIN}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${GITHUB_REPO}.git"
+RELEASE_TAG="backup-${CLUSTER_NAME}-$(date +%Y%m%d-%H%M%S)"
+RELEASE_NAME="${CLUSTER_NAME} · ${OPERATOR_TYPE} v${CNPG_VERSION} · $(date +%Y-%m-%d)"
 
-info "Cloning repo (shallow clone, skipping existing LFS objects for speed)..."
-GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 "${REPO_URL}" "${REPO_DIR}" 2>&1 | sed "s/${GITHUB_TOKEN}/****/g"
+# Python helper: create release and return ID + upload base URL
+CREATE_PY="${WORK_DIR}/create_release.py"
+cat > "${CREATE_PY}" << 'PYEOF'
+import sys, json
+try:
+    from urllib.request import urlopen, Request
+    from urllib.error import HTTPError
+except ImportError:
+    sys.exit(1)
 
-git -C "${REPO_DIR}" config user.name "${LOGIN}"
-git -C "${REPO_DIR}" config user.email "${LOGIN}@users.noreply.github.com"
-git -C "${REPO_DIR}" config http.postBuffer 1073741824
-git -C "${REPO_DIR}" config http.lowSpeedLimit 1000
-git -C "${REPO_DIR}" config http.lowSpeedTime 600
+token, owner, repo, tag, name = sys.argv[1:6]
+url  = f"https://api.github.com/repos/{owner}/{repo}/releases"
+body = json.dumps({"tag_name": tag, "name": name,
+                   "body": "Automated backup by docker-cluster-backup.sh",
+                   "draft": False, "prerelease": False}).encode()
+req = Request(url, data=body, headers={
+    "Authorization": f"token {token}",
+    "Accept": "application/vnd.github+json",
+    "Content-Type": "application/json"}, method="POST")
+try:
+    with urlopen(req) as r:
+        d = json.load(r)
+        print(d["id"])
+        print(d["upload_url"].split("{")[0])
+except HTTPError as e:
+    sys.stderr.write(f"HTTP {e.code}: {e.read().decode()}\n")
+    sys.exit(1)
+PYEOF
 
-# Ensure .gitattributes tracks *.tar.gz via LFS
-git -C "${REPO_DIR}" lfs install 2>/dev/null || true
-if ! grep -q "^\*.tar.gz" "${REPO_DIR}/.gitattributes" 2>/dev/null; then
-  echo "*.tar.gz filter=lfs diff=lfs merge=lfs -text" >> "${REPO_DIR}/.gitattributes"
-  git -C "${REPO_DIR}" add .gitattributes
+info "Creating GitHub Release: ${RELEASE_TAG}..."
+REL_OUT=$(python3 "${CREATE_PY}" "${GITHUB_TOKEN}" "${LOGIN}" \
+  "${GITHUB_REPO}" "${RELEASE_TAG}" "${RELEASE_NAME}" 2>/dev/null || true)
+[[ -z "${REL_OUT}" ]] && error "Failed to create GitHub Release. Check PAT has 'repo' scope."
+
+RELEASE_ID=$(echo "${REL_OUT}" | head -1)
+UPLOAD_BASE=$(echo "${REL_OUT}" | tail -1)
+success "Release created: ${RELEASE_TAG} (ID: ${RELEASE_ID})"
+info "View at: https://github.com/${GITHUB_USER}/${GITHUB_REPO}/releases/tag/${RELEASE_TAG}"
+
+# ── Upload helper (with retry) ───────────────────────────────────────────────
+upload_asset() {
+  local file="$1" name="$2"
+  local size_mb=$(( $(wc -c < "${file}" | tr -d ' ') / 1024 / 1024 ))
+  for attempt in 1 2 3; do
+    info "Uploading ${name} (${size_mb} MB, attempt ${attempt}/3)..."
+    HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: token ${GITHUB_TOKEN}" \
+      -H "Content-Type: application/octet-stream" \
+      --max-time 7200 \
+      --data-binary @"${file}" \
+      "${UPLOAD_BASE}?name=${name}" 2>/dev/null || echo "000")
+    if [[ "${HTTP}" == "201" ]]; then
+      success "${name} uploaded."
+      return 0
+    elif [[ "${HTTP}" == "422" ]]; then
+      warn "${name} already exists in this release — skipping."
+      return 0
+    fi
+    warn "Attempt ${attempt}/3 failed (HTTP ${HTTP}). Retrying in 15s..."
+    sleep 15
+  done
+  error "Failed to upload ${name} after 3 attempts."
+}
+
+# ── Upload snapshot (split into 1.8 GB chunks if > 1.9 GB) ──────────────────
+SNAPSHOT_FILE="${WORK_DIR}/cnpg-snapshot.tar.gz"
+SNAPSHOT_BYTES=$(wc -c < "${SNAPSHOT_FILE}" | tr -d ' ')
+MAX_BYTES=1900000000
+
+if [[ ${SNAPSHOT_BYTES} -le ${MAX_BYTES} ]]; then
+  upload_asset "${SNAPSHOT_FILE}" "cnpg-snapshot.tar.gz"
+else
+  SNAP_GB=$(( SNAPSHOT_BYTES / 1024 / 1024 / 1024 ))
+  info "Snapshot is ${SNAP_GB} GB — splitting into 1.8 GB chunks for upload..."
+  SPLIT_DIR="${WORK_DIR}/parts"
+  mkdir -p "${SPLIT_DIR}"
+  split -b 1800000000 "${SNAPSHOT_FILE}" "${SPLIT_DIR}/cnpg-snapshot.part."
+  PARTS=()
+  while IFS= read -r p; do PARTS+=("${p}"); done < <(find "${SPLIT_DIR}" -name "cnpg-snapshot.part.*" | sort)
+  TOTAL_PARTS=${#PARTS[@]}
+  success "Split into ${TOTAL_PARTS} parts."
+  for i in "${!PARTS[@]}"; do
+    SUFFIX="${PARTS[$i]##*.}"
+    upload_asset "${PARTS[$i]}" "cnpg-snapshot.part.${SUFFIX}"
+  done
+  printf '%d' "${TOTAL_PARTS}" > "${WORK_DIR}/snapshot-parts.txt"
+  upload_asset "${WORK_DIR}/snapshot-parts.txt" "snapshot-parts.txt"
 fi
-success "Git LFS configured for snapshot tar.gz."
 
-# Create/update cluster subfolder and copy files
-mkdir -p "${REPO_DIR}/${CLUSTER_NAME}"
-info "Copying backup artifacts into ${CLUSTER_NAME}/..."
-cp "${WORK_DIR}/cnpg-snapshot.tar.gz"     "${REPO_DIR}/${CLUSTER_NAME}/cnpg-snapshot.tar.gz"
-cp "${WORK_DIR}/cnp-cluster-config.yaml"  "${REPO_DIR}/${CLUSTER_NAME}/cnp-cluster-config.yaml"
-cp "${WORK_DIR}/cnpg-db-blueprints.yaml"  "${REPO_DIR}/${CLUSTER_NAME}/cnpg-db-blueprints.yaml"
-cp "${WORK_DIR}/cnpg-version.txt"         "${REPO_DIR}/${CLUSTER_NAME}/cnpg-version.txt"
-cp "${WORK_DIR}/cluster-name.txt"         "${REPO_DIR}/${CLUSTER_NAME}/cluster-name.txt"
-cp "${WORK_DIR}/operator-namespace.txt"   "${REPO_DIR}/${CLUSTER_NAME}/operator-namespace.txt"
-[[ -f "${WORK_DIR}/cert-manager-version.txt" ]] && \
-  cp "${WORK_DIR}/cert-manager-version.txt" "${REPO_DIR}/${CLUSTER_NAME}/cert-manager-version.txt"
-success "Files staged."
-
-git -C "${REPO_DIR}" add "${CLUSTER_NAME}/"
-info "Committing..."
-git -C "${REPO_DIR}" commit \
-  -m "backup: ${CLUSTER_NAME} (${OPERATOR_TYPE} v${CNPG_VERSION}) $(date +%Y-%m-%d)" \
-  2>/dev/null || warn "Nothing new to commit — backup files unchanged since last upload."
-
-info "Uploading LFS objects to GitHub (snapshot tar — may take several minutes)..."
-LFS_OK=false
-for lfs_attempt in 1 2 3; do
-  if git -C "${REPO_DIR}" lfs push origin main 2>&1 | sed "s/${GITHUB_TOKEN}/****/g"; then
-    LFS_OK=true
-    break
-  fi
-  warn "LFS push attempt ${lfs_attempt}/3 failed. Retrying in 10s..."
-  sleep 10
+# ── Upload metadata files ────────────────────────────────────────────────────
+for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
+          cluster-name.txt operator-namespace.txt cert-manager-version.txt; do
+  [[ -f "${WORK_DIR}/${f}" ]] && upload_asset "${WORK_DIR}/${f}" "${f}"
 done
 
-info "Pushing refs to GitHub (updating repo index)..."
-# Disable LFS pre-push hook so this step only updates refs (LFS already done above)
-HOOK_FILE="${REPO_DIR}/.git/hooks/pre-push"
-[[ -f "${HOOK_FILE}" ]] && chmod -x "${HOOK_FILE}"
-git -C "${REPO_DIR}" push origin main 2>&1 | sed "s/${GITHUB_TOKEN}/****/g"
-[[ -f "${HOOK_FILE}" ]] && chmod +x "${HOOK_FILE}"
-
-# ── Done ──────────────────────────────────────────────────────────────────────
-TAR_SIZE=$(du -sh "${WORK_DIR}/cnpg-snapshot.tar.gz" | cut -f1)
+# ── Done ─────────────────────────────────────────────────────────────────────
+TAR_SIZE=$(du -sh "${SNAPSHOT_FILE}" | cut -f1)
 CFG_SIZE=$(du -sh "${WORK_DIR}/cnp-cluster-config.yaml" | cut -f1)
 BP_SIZE=$(du -sh  "${WORK_DIR}/cnpg-db-blueprints.yaml" | cut -f1)
 
@@ -396,16 +436,16 @@ echo -e "${BOLD}${GREEN}╔═════════════════�
 echo -e "${BOLD}${GREEN}║  Backup complete!                                            ║${NC}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${CYAN}https://github.com/${GITHUB_USER}/${GITHUB_REPO}/tree/main/${CLUSTER_NAME}${NC}"
+echo -e "  ${CYAN}https://github.com/${GITHUB_USER}/${GITHUB_REPO}/releases/tag/${RELEASE_TAG}${NC}"
 echo ""
-echo -e "  ${BOLD}Files uploaded:${NC}"
-echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnpg-snapshot.tar.gz      ${TAR_SIZE}  (compressed · via Git LFS)"
-echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnp-cluster-config.yaml   ${CFG_SIZE}"
-echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnpg-db-blueprints.yaml   ${BP_SIZE}"
-echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cnpg-version.txt"
-echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/operator-namespace.txt"
+echo -e "  ${BOLD}Files uploaded to GitHub Release:${NC}"
+echo -e "  ${GREEN}✓${NC}  cnpg-snapshot.tar.gz      ${TAR_SIZE}"
+echo -e "  ${GREEN}✓${NC}  cnp-cluster-config.yaml   ${CFG_SIZE}"
+echo -e "  ${GREEN}✓${NC}  cnpg-db-blueprints.yaml   ${BP_SIZE}"
+echo -e "  ${GREEN}✓${NC}  cnpg-version.txt"
+echo -e "  ${GREEN}✓${NC}  operator-namespace.txt"
 [[ -n "${CERT_MANAGER_VERSION}" ]] && \
-  echo -e "  ${GREEN}✓${NC}  ${CLUSTER_NAME}/cert-manager-version.txt"
+  echo -e "  ${GREEN}✓${NC}  cert-manager-version.txt"
 echo ""
 echo -e "  ${BOLD}To restore this cluster on any machine:${NC}"
 echo -e "  ${YELLOW}curl -fsSL https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/docker-cluster-restore.sh \\"
