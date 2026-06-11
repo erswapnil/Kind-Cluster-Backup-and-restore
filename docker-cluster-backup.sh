@@ -233,12 +233,41 @@ if [[ -z "${OPERATOR_NS}" ]]; then
   fi
 fi
 
+# ── PGD4K: also detect the CNP sub-operator running underneath ───────────────
+# PGD4K runs two operators in pgd-operator-system:
+#   1. pgd-operator (global-cluster:2.x.x)         ← OPERATOR_IMAGE above
+#   2. postgresql-operator (cnp:1.x.x)             ← PGD_CNP_IMAGE below
+PGD_CNP_IMAGE=""
+PGD_CNP_VERSION=""
+if [[ "${OPERATOR_NS}" == "pgd-operator-system" ]]; then
+  PGD_CNP_IMAGE=$(kubectl get pods -n pgd-operator-system --context "${CONTEXT}" \
+    -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
+    2>/dev/null \
+    | grep -i "edb-postgres-for-cloudnativepg" \
+    | grep -iv "global-cluster" \
+    | head -1 || true)
+  if [[ -z "${PGD_CNP_IMAGE}" ]]; then
+    # Fallback to deployment spec if pods are not running yet
+    PGD_CNP_IMAGE=$(kubectl get deployment -n pgd-operator-system --context "${CONTEXT}" \
+      -o jsonpath='{range .items[*]}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}' \
+      2>/dev/null \
+      | grep -i "edb-postgres-for-cloudnativepg" \
+      | grep -iv "global-cluster" \
+      | head -1 || true)
+  fi
+  [[ -n "${PGD_CNP_IMAGE}" ]] && \
+    PGD_CNP_VERSION=$(echo "${PGD_CNP_IMAGE}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+fi
+
 # ── Results ───────────────────────────────────────────────────────────────────
 if [[ -n "${OPERATOR_NS}" && -n "${CNPG_VERSION}" ]]; then
   success "Operator   : ${OPERATOR_TYPE}"
   success "Namespace  : ${OPERATOR_NS}"
   success "Version    : ${CNPG_VERSION}"
   [[ -n "${OPERATOR_IMAGE}" ]] && success "Image      : ${OPERATOR_IMAGE}"
+  if [[ -n "${PGD_CNP_IMAGE}" ]]; then
+    success "CNP backend: ${PGD_CNP_IMAGE}"
+  fi
 elif [[ -n "${OPERATOR_NS}" && -z "${CNPG_VERSION}" ]]; then
   # Operator type known but version not found — just ask for version
   success "Operator   : ${OPERATOR_TYPE}"
@@ -323,6 +352,8 @@ echo -e "  ${BOLD}Operator     :${NC} ${OPERATOR_TYPE} v${CNPG_VERSION}"
 echo -e "  ${BOLD}Namespace    :${NC} ${OPERATOR_NS}"
 [[ -n "${OPERATOR_IMAGE}" ]] && \
 echo -e "  ${BOLD}Image        :${NC} ${OPERATOR_IMAGE}"
+[[ -n "${PGD_CNP_IMAGE}" ]] && \
+echo -e "  ${BOLD}CNP backend  :${NC} ${PGD_CNP_IMAGE}"
 echo -e "  ${BOLD}GitHub target:${NC} ${GITHUB_USER}/${GITHUB_REPO} (GitHub Release)"
 echo ""
 read -rp "Start backup? [Y/n]: " GO
@@ -425,6 +456,8 @@ echo "${OPERATOR_NS}"    > "${WORK_DIR}/operator-namespace.txt"
 echo "${OPERATOR_TYPE}"  > "${WORK_DIR}/operator-type.txt"
 [[ -n "${OPERATOR_IMAGE}" ]]       && echo "${OPERATOR_IMAGE}"       > "${WORK_DIR}/operator-image.txt"
 [[ -n "${CERT_MANAGER_VERSION}" ]] && echo "${CERT_MANAGER_VERSION}" > "${WORK_DIR}/cert-manager-version.txt"
+[[ -n "${PGD_CNP_IMAGE}" ]]        && echo "${PGD_CNP_IMAGE}"        > "${WORK_DIR}/pgd-cnp-image.txt"
+[[ -n "${PGD_CNP_VERSION}" ]]      && echo "${PGD_CNP_VERSION}"      > "${WORK_DIR}/pgd-cnp-version.txt"
 success "Metadata files written."
 
 # ── Step 7: Upload to GitHub Release ─────────────────────────────────────────
@@ -600,7 +633,8 @@ echo ""
 info "Uploading metadata files..."
 for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
           cluster-name.txt operator-namespace.txt operator-type.txt \
-          operator-image.txt cert-manager-version.txt; do
+          operator-image.txt cert-manager-version.txt \
+          pgd-cnp-image.txt pgd-cnp-version.txt; do
   [[ -f "${WORK_DIR}/${f}" ]] && upload_asset "${WORK_DIR}/${f}" "${f}"
 done
 
@@ -631,6 +665,8 @@ echo -e "  ${GREEN}✓${NC}  operator-type.txt         (${OPERATOR_TYPE})"
   echo -e "  ${GREEN}✓${NC}  operator-image.txt        (${OPERATOR_IMAGE})"
 [[ -n "${CERT_MANAGER_VERSION}" ]] && \
   echo -e "  ${GREEN}✓${NC}  cert-manager-version.txt  (${CERT_MANAGER_VERSION})"
+[[ -n "${PGD_CNP_IMAGE}" ]] && \
+  echo -e "  ${GREEN}✓${NC}  pgd-cnp-image.txt         (${PGD_CNP_IMAGE})"
 echo ""
 echo -e "  ${BOLD}To restore this cluster on any machine:${NC}"
 echo -e "  ${YELLOW}curl -fsSL https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/docker-cluster-restore.sh \\"

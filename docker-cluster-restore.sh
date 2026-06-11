@@ -311,7 +311,8 @@ cp "${SNAPSHOT_DEST}" "${BACKUP_DIR}/cnpg-snapshot.tar.gz"
 
 for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
           cluster-name.txt operator-namespace.txt operator-type.txt \
-          operator-image.txt cert-manager-version.txt; do
+          operator-image.txt cert-manager-version.txt \
+          pgd-cnp-image.txt pgd-cnp-version.txt; do
   if [[ -n "${ASSET_URLS[${f}]:-}" ]]; then
     download_asset "${f}" "${BACKUP_DIR}/${f}" || warn "Could not download ${f} (non-fatal)."
   fi
@@ -349,6 +350,17 @@ fi
 if [[ -f "${BACKUP_SUBDIR}/operator-image.txt" ]]; then
   OPERATOR_IMAGE=$(cat "${BACKUP_SUBDIR}/operator-image.txt" | tr -d '[:space:]')
   info "Operator image     : ${OPERATOR_IMAGE} (from metadata)"
+fi
+
+# PGD4K sub-operator info (only present for PGD4K backups)
+PGD_CNP_IMAGE=""
+PGD_CNP_VERSION=""
+if [[ -f "${BACKUP_SUBDIR}/pgd-cnp-image.txt" ]]; then
+  PGD_CNP_IMAGE=$(cat "${BACKUP_SUBDIR}/pgd-cnp-image.txt" | tr -d '[:space:]')
+  info "CNP backend image  : ${PGD_CNP_IMAGE} (from metadata)"
+fi
+if [[ -f "${BACKUP_SUBDIR}/pgd-cnp-version.txt" ]]; then
+  PGD_CNP_VERSION=$(cat "${BACKUP_SUBDIR}/pgd-cnp-version.txt" | tr -d '[:space:]')
 fi
 
 # Priority 2: scan YAML files for known operator namespaces (for older backups without metadata)
@@ -459,6 +471,8 @@ echo -e "  Version            : v${CNPG_VERSION}"
 echo -e "  Operator namespace : ${OPERATOR_NS}"
 [[ -n "${OPERATOR_IMAGE}" ]] && \
 echo -e "  Operator image     : ${OPERATOR_IMAGE}"
+[[ -n "${PGD_CNP_IMAGE}" ]] && \
+echo -e "  CNP backend        : ${PGD_CNP_IMAGE}"
 echo -e "  Snapshot size      : $(du -sh "${SNAPSHOT_TAR}" | cut -f1)"
 echo ""
 
