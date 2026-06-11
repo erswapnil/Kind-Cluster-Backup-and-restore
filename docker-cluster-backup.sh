@@ -119,76 +119,92 @@ step "Step 2 · Auto-detecting operator (CNPG / EDB CNP / PGD4K)"
 CNPG_VERSION=""
 OPERATOR_NS=""
 OPERATOR_TYPE=""
+OPERATOR_IMAGE=""
 
-detect_version_from_ns() {
-  local ns="$1"
-  # Check namespace exists first — echo "" and return 0 so set -e doesn't fire in caller's $()
-  kubectl get ns "${ns}" --context "${CONTEXT}" &>/dev/null 2>&1 || { echo ""; return 0; }
+# ── Method 1: CRD-based detection (most reliable — CRDs always present) ──────
+info "Detecting operator type via CRDs..."
 
-  local deploy_count
-  deploy_count=$(kubectl get deployment -n "${ns}" --context "${CONTEXT}" \
-    --no-headers 2>/dev/null | wc -l | tr -d ' ') || true
-  [[ "${deploy_count}" -eq 0 ]] && { echo ""; return 0; }
+if kubectl get crd clusters.postgresql.cnpg.io --context "${CONTEXT}" &>/dev/null 2>&1; then
+  OPERATOR_NS="cnpg-system"
+  OPERATOR_TYPE="Community CloudNativePG"
+elif kubectl get crd clusters.postgresql.k8s.enterprisedb.io --context "${CONTEXT}" &>/dev/null 2>&1; then
+  OPERATOR_NS="postgresql-operator-system"
+  OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)"
+elif kubectl get crd pgdgroups.pgd.k8s.enterprisedb.io --context "${CONTEXT}" &>/dev/null 2>&1; then
+  OPERATOR_NS="pgd-operator-system"
+  OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)"
+fi
 
-  local ver
-  # Try operator-specific image keywords first (broad list covers all variants)
-  ver=$(kubectl get deployment -n "${ns}" --context "${CONTEXT}" \
-    -o jsonpath='{range .items[*]}{.spec.template.spec.containers[*].image}{"\n"}{end}' \
-    2>/dev/null \
-    | grep -i -E "cloudnative-pg|cloud-native-pg|edb-postgres|enterprisedb|cnpg|pgd|barman" \
-    | grep -oE ':[0-9]+\.[0-9]+\.[0-9]+' | tr -d ':' | head -1 || true)
+# ── Method 2: Extract version from operator pod images ────────────────────────
+if [[ -n "${OPERATOR_NS}" ]]; then
+  info "Operator namespace detected: ${OPERATOR_NS}"
+  info "Extracting version from operator pods..."
 
-  # Fallback: any semver from ANY image in this namespace (catches all image naming schemes)
-  if [[ -z "${ver}" ]]; then
-    ver=$(kubectl get deployment -n "${ns}" --context "${CONTEXT}" \
+  # Try pods first (most accurate — running image tag = actual version)
+  OPERATOR_IMAGE=$(kubectl get pods -n "${OPERATOR_NS}" --context "${CONTEXT}" \
+    -o jsonpath='{range .items[*]}{.spec.containers[*].image}{"\n"}{end}' \
+    2>/dev/null | grep -v "^$" | head -1 || true)
+
+  if [[ -n "${OPERATOR_IMAGE}" ]]; then
+    CNPG_VERSION=$(echo "${OPERATOR_IMAGE}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+  fi
+
+  # If pods gave nothing, try deployments
+  if [[ -z "${CNPG_VERSION}" ]]; then
+    OPERATOR_IMAGE=$(kubectl get deployment -n "${OPERATOR_NS}" --context "${CONTEXT}" \
       -o jsonpath='{range .items[*]}{.spec.template.spec.containers[*].image}{"\n"}{end}' \
-      2>/dev/null | grep -oE ':[0-9]+\.[0-9]+\.[0-9]+' | tr -d ':' | head -1 || true)
+      2>/dev/null | grep -v "^$" | head -1 || true)
+    [[ -n "${OPERATOR_IMAGE}" ]] && \
+      CNPG_VERSION=$(echo "${OPERATOR_IMAGE}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
   fi
-  echo "${ver}"
-}
+fi
 
-for ns_candidate in "cnpg-system" "postgresql-operator-system" "pgd-operator-system"; do
-  info "Checking ${ns_candidate}..."
-  detected=$(detect_version_from_ns "${ns_candidate}") || true
-  if [[ -n "${detected}" ]]; then
-    CNPG_VERSION="${detected}"
-    OPERATOR_NS="${ns_candidate}"
-    break
-  fi
-done
-
-# Fallback: scan all namespaces for any operator-related deployment
-if [[ -z "${CNPG_VERSION}" ]]; then
-  info "Scanning all namespaces for operator deployments..."
+# ── Method 3: Fallback — scan all namespaces if CRD detection missed ──────────
+if [[ -z "${OPERATOR_NS}" ]]; then
+  info "CRD check inconclusive — scanning all namespaces..."
   while IFS= read -r line; do
     ns=$(echo "${line}" | awk '{print $1}')
     img=$(echo "${line}" | awk '{print $2}')
-    ver=$(echo "${img}" | grep -oE ':[0-9]+\.[0-9]+\.[0-9]+' | tr -d ':' | head -1 || true)
+    ver=$(echo "${img}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
     if [[ -n "${ver}" ]]; then
       CNPG_VERSION="${ver}"
       OPERATOR_NS="${ns}"
+      OPERATOR_IMAGE="${img}"
       break
     fi
-  done < <(kubectl get deployment --all-namespaces --context "${CONTEXT}" \
-    -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.spec.template.spec.containers[*].image}{"\n"}{end}' \
+  done < <(kubectl get pods --all-namespaces --context "${CONTEXT}" \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.spec.containers[*].image}{"\n"}{end}' \
     2>/dev/null \
-    | grep -i -E "cloudnative-pg|cloud-native-pg|edb-postgres|enterprisedb|cnpg|pgd|barman|operator" \
+    | grep -i -E "cloudnative-pg|cloud-native-pg|edb-postgres|enterprisedb|cnpg|pgd|barman" \
     || true)
+  if [[ -n "${OPERATOR_NS}" ]]; then
+    case "${OPERATOR_NS}" in
+      "cnpg-system")                 OPERATOR_TYPE="Community CloudNativePG" ;;
+      "postgresql-operator-system")  OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)" ;;
+      "pgd-operator-system")         OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)" ;;
+      *)                             OPERATOR_TYPE="Unknown operator" ;;
+    esac
+  fi
 fi
 
-if [[ -n "${CNPG_VERSION}" ]]; then
-  case "${OPERATOR_NS}" in
-    "cnpg-system")                 OPERATOR_TYPE="Community CloudNativePG" ;;
-    "postgresql-operator-system")  OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)" ;;
-    "pgd-operator-system")         OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)" ;;
-    *)                             OPERATOR_TYPE="Unknown operator in ns '${OPERATOR_NS}'" ;;
-  esac
+# ── Results ───────────────────────────────────────────────────────────────────
+if [[ -n "${OPERATOR_NS}" && -n "${CNPG_VERSION}" ]]; then
   success "Operator   : ${OPERATOR_TYPE}"
   success "Namespace  : ${OPERATOR_NS}"
   success "Version    : ${CNPG_VERSION}"
+  [[ -n "${OPERATOR_IMAGE}" ]] && info "Image      : ${OPERATOR_IMAGE}"
+elif [[ -n "${OPERATOR_NS}" && -z "${CNPG_VERSION}" ]]; then
+  # Operator type known but version not found — just ask for version
+  success "Operator   : ${OPERATOR_TYPE}"
+  success "Namespace  : ${OPERATOR_NS}"
+  warn "Could not extract version from operator images."
+  echo ""
+  read -rp "  Enter operator version (e.g. 1.28.0): " CNPG_VERSION
+  [[ -z "${CNPG_VERSION}" ]] && error "Operator version is required."
+  success "Version    : ${CNPG_VERSION}"
 else
-  # Manual fallback — ask both operator type AND version
-  warn "Could not auto-detect operator type."
+  # Nothing found at all — ask for everything
+  warn "Could not auto-detect operator. Manual input required."
   echo ""
   echo "  Select operator type:"
   echo "    1) Community CloudNativePG         (namespace: cnpg-system)"
@@ -198,9 +214,9 @@ else
   while true; do
     read -rp "  Enter 1, 2, or 3: " OP_CHOICE
     case "${OP_CHOICE}" in
-      1) OPERATOR_NS="cnpg-system";               OPERATOR_TYPE="Community CloudNativePG";                  break ;;
-      2) OPERATOR_NS="postgresql-operator-system"; OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)";    break ;;
-      3) OPERATOR_NS="pgd-operator-system";        OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)";        break ;;
+      1) OPERATOR_NS="cnpg-system";               OPERATOR_TYPE="Community CloudNativePG";               break ;;
+      2) OPERATOR_NS="postgresql-operator-system"; OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)"; break ;;
+      3) OPERATOR_NS="pgd-operator-system";        OPERATOR_TYPE="EDB Postgres Distributed (PGD4K)";     break ;;
       *) warn "Enter 1, 2, or 3." ;;
     esac
   done
