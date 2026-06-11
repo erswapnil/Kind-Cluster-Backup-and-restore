@@ -155,10 +155,23 @@ if [[ -n "${OPERATOR_NS}" ]]; then
     -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
     2>/dev/null | grep -v "^$" || true)
 
-  # Prefer the operator-specific image (skip sidecars like kube-rbac-proxy)
-  OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
-    | grep -i -E "edb-postgres-for-cloudnativepg|cloudnative-pg|cloud-native-pg|cnpg|pgd|enterprisedb" \
-    | head -1 || true)
+  # For PGD4K: two operators run in pgd-operator-system — the PGD global-cluster
+  # image (2.x.x) and the CNP sub-operator image (1.x.x). Prefer the PGD one.
+  if [[ "${OPERATOR_NS}" == "pgd-operator-system" ]]; then
+    OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
+      | grep -i "global-cluster" \
+      | head -1 || true)
+    if [[ -z "${OPERATOR_IMAGE}" ]]; then
+      OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
+        | grep -i -E "pgd|edb-postgres-for-cloudnativepg|enterprisedb" \
+        | head -1 || true)
+    fi
+  else
+    # Community CNPG or EDB CNP: pick the operator-specific image, skip sidecars
+    OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
+      | grep -i -E "edb-postgres-for-cloudnativepg|cloudnative-pg|cloud-native-pg|cnpg|enterprisedb" \
+      | head -1 || true)
+  fi
 
   # Fallback: use any image that has a semver tag
   if [[ -z "${OPERATOR_IMAGE}" ]]; then
@@ -177,12 +190,16 @@ if [[ -n "${OPERATOR_NS}" ]]; then
     ALL_IMAGES=$(kubectl get deployment -n "${OPERATOR_NS}" --context "${CONTEXT}" \
       -o jsonpath='{range .items[*]}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}' \
       2>/dev/null | grep -v "^$" || true)
-    OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
-      | grep -i -E "edb-postgres-for-cloudnativepg|cloudnative-pg|cloud-native-pg|cnpg|pgd|enterprisedb" \
-      | head -1 || true)
-    if [[ -z "${OPERATOR_IMAGE}" ]]; then
-      OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" | head -1 || true)
+    if [[ "${OPERATOR_NS}" == "pgd-operator-system" ]]; then
+      OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" | grep -i "global-cluster" | head -1 || true)
+      [[ -z "${OPERATOR_IMAGE}" ]] && OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
+        | grep -i -E "pgd|edb-postgres-for-cloudnativepg|enterprisedb" | head -1 || true)
+    else
+      OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" \
+        | grep -i -E "edb-postgres-for-cloudnativepg|cloudnative-pg|cloud-native-pg|cnpg|enterprisedb" \
+        | head -1 || true)
     fi
+    [[ -z "${OPERATOR_IMAGE}" ]] && OPERATOR_IMAGE=$(echo "${ALL_IMAGES}" | head -1 || true)
     [[ -n "${OPERATOR_IMAGE}" ]] && \
       CNPG_VERSION=$(echo "${OPERATOR_IMAGE}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
   fi
