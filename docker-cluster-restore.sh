@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
 # docker-cluster-restore.sh
-# Restores a kind cluster (CNPG / EDB CNP / EDB PGD4K) from a PUBLIC GitHub repo.
+# Restores a kind cluster (CNPG / EDB CNP / EDB PGD4K) from a GitHub Release.
 #
 # Compatible with macOS default bash 3.2+
-# No GitHub token required — reads from any public repo.
+# No GitHub token required for public repos.
 #
 # Cluster types supported:
 #   cnpg-system               → Community CloudNativePG (CNPG)
@@ -16,12 +16,12 @@
 #
 # What it asks you:
 #   1. GitHub username + repo name (defaults pre-filled, just press Enter)
-#   2. Which cluster to restore — shows live list of folders from GitHub
+#   2. Which cluster to restore — shows live list from GitHub Releases
 #
 # What it does automatically:
-#   - Lists all cluster backup folders in the GitHub repo via API
+#   - Lists all backup releases in the GitHub repo via API
 #   - Shows table: cluster name, snapshot status, K8s config, DB blueprints
-#   - Clones the repo with git-lfs (downloads the snapshot tar)
+#   - Downloads snapshot (single file or reassembles chunks)
 #   - Auto-detects operator type + version from backup metadata
 #   - Loads Docker snapshot, creates fresh kind cluster
 #   - Installs the correct operator (CNPG / CNP / PGD4K)
@@ -57,11 +57,10 @@ echo ""
 
 # ── Pre-flight ────────────────────────────────────────────────────────────────
 step "Pre-flight checks"
-for cmd in curl python3 docker kind kubectl git; do
+for cmd in curl python3 docker kind kubectl; do
   command -v "$cmd" &>/dev/null || error "$cmd not found. Install it first."
 done
 docker info &>/dev/null 2>&1 || error "Docker Desktop is not running. Start it first."
-
 success "All pre-flight checks passed."
 
 # ── Step 1: GitHub repo details ───────────────────────────────────────────────
@@ -130,7 +129,10 @@ for rel in releases:
     if not tag.startswith("backup-"):
         continue
     assets = {a["name"]: a["browser_download_url"] for a in rel.get("assets", [])}
-    has_snap = "cnpg-snapshot.tar.gz" in assets or any(n.startswith("cnpg-snapshot.part.") for n in assets)
+    has_snap = (
+        "cnpg-snapshot.tar.gz" in assets
+        or any(n.startswith("cnpg-snapshot.part.") for n in assets)
+    )
     has_cfg  = "cnp-cluster-config.yaml" in assets
     has_bp   = "cnpg-db-blueprints.yaml" in assets
     if not has_snap:
@@ -249,7 +251,8 @@ download_asset() {
   [[ -z "${url}" ]] && return 1
   for attempt in 1 2 3; do
     info "Downloading ${name} (attempt ${attempt}/3)..."
-    if curl -L --max-time 7200 -o "${dest}" "${url}" 2>/dev/null; then
+    if curl -L --max-time 7200 -# -o "${dest}" "${url}" 2>/dev/tty; then
+      echo ""
       success "${name} downloaded: $(du -sh "${dest}" | cut -f1)"
       return 0
     fi
@@ -259,32 +262,44 @@ download_asset() {
   return 1
 }
 
-# Download snapshot (handle split parts)
+# Download snapshot — handle single file or split chunks
 SNAPSHOT_DEST="${WORK_DIR}/snapshot.tar.gz"
+
 if [[ -n "${ASSET_URLS[cnpg-snapshot.tar.gz]:-}" ]]; then
+  # Single file (small snapshot that fit in one chunk)
   download_asset "cnpg-snapshot.tar.gz" "${SNAPSHOT_DEST}" || error "Failed to download snapshot."
 else
-  # Split parts — find them sorted
+  # Split parts — find and download all chunks in order
   PARTS_COUNT_URL="${ASSET_URLS[snapshot-parts.txt]:-}"
   if [[ -z "${PARTS_COUNT_URL}" ]]; then
-    error "No snapshot found in release ${SELECTED_TAG}."
+    error "No snapshot found in release ${SELECTED_TAG}. Backup may be incomplete."
   fi
   TOTAL_PARTS=$(curl -sf "${PARTS_COUNT_URL}" | tr -d '[:space:]' || echo "0")
   [[ "${TOTAL_PARTS}" -eq 0 ]] && error "Could not determine snapshot part count."
-  info "Downloading ${TOTAL_PARTS} snapshot chunks..."
+
+  info "Snapshot was split into ${TOTAL_PARTS} chunks — downloading each chunk..."
   PARTS_DIR="${WORK_DIR}/parts"
   mkdir -p "${PARTS_DIR}"
-  # Collect part names from assets (cnpg-snapshot.part.aa, ab, ...)
+
+  # Collect part names from assets (cnpg-snapshot.part.aa, ab, ac, ...)
   PART_FILES=()
   for name in "${!ASSET_URLS[@]}"; do
     [[ "${name}" == cnpg-snapshot.part.* ]] && PART_FILES+=("${name}")
   done
-  # Sort part files
+
+  # Sort part files alphabetically (preserves split order: aa, ab, ac, ...)
   IFS=$'\n' PART_FILES=($(sort <<< "${PART_FILES[*]}")); unset IFS
+
+  PART_NUM=0
   for pf in "${PART_FILES[@]}"; do
-    download_asset "${pf}" "${PARTS_DIR}/${pf}" || error "Failed to download ${pf}."
+    PART_NUM=$(( PART_NUM + 1 ))
+    echo -e "  ${BOLD}── Chunk ${PART_NUM} / ${TOTAL_PARTS} ──${NC}"
+    download_asset "${pf}" "${PARTS_DIR}/${pf}" || error "Failed to download chunk ${pf}."
+    echo ""
   done
-  info "Reassembling snapshot from ${#PART_FILES[@]} parts..."
+
+  # Reassemble all chunks in order
+  info "Reassembling snapshot from ${#PART_FILES[@]} chunks..."
   cat "${PARTS_DIR}"/cnpg-snapshot.part.* > "${SNAPSHOT_DEST}"
   success "Snapshot reassembled: $(du -sh "${SNAPSHOT_DEST}" | cut -f1)"
 fi
@@ -298,20 +313,13 @@ for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
           cluster-name.txt operator-namespace.txt operator-type.txt \
           operator-image.txt cert-manager-version.txt; do
   if [[ -n "${ASSET_URLS[${f}]:-}" ]]; then
-    download_asset "${f}" "${BACKUP_DIR}/${f}" || warn "Could not download ${f}."
+    download_asset "${f}" "${BACKUP_DIR}/${f}" || warn "Could not download ${f} (non-fatal)."
   fi
 done
 success "All backup files downloaded."
 
-# Point BACKUP_SUBDIR to the downloaded files
+# ── Artifact paths ────────────────────────────────────────────────────────────
 BACKUP_SUBDIR="${BACKUP_DIR}"
-    sleep 10
-  done
-  [[ "${LFS_OK}" == "true" ]] || error "Failed to download snapshot after 3 attempts. Check your network connection."
-fi
-
-# Replace the LFS pointer with the actual downloaded file
-# Artifact file paths (BACKUP_SUBDIR already set above)
 SNAPSHOT_TAR="${BACKUP_SUBDIR}/cnpg-snapshot.tar.gz"
 CLUSTER_CONFIG="${BACKUP_SUBDIR}/cnp-cluster-config.yaml"
 DB_BLUEPRINTS="${BACKUP_SUBDIR}/cnpg-db-blueprints.yaml"
@@ -364,19 +372,19 @@ fi
 # Determine operator type and version label for display messages
 case "${OPERATOR_NS}" in
   "cnpg-system")
-    OPERATOR_TYPE="Community CloudNativePG (CNPG)"
+    [[ -z "${OPERATOR_TYPE}" ]] && OPERATOR_TYPE="Community CloudNativePG (CNPG)"
     VERSION_LABEL="CNPG version"
     ;;
   "postgresql-operator-system")
-    OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)"
+    [[ -z "${OPERATOR_TYPE}" ]] && OPERATOR_TYPE="EDB Postgres for CloudNativePG (CNP)"
     VERSION_LABEL="CNP version"
     ;;
   "pgd-operator-system")
-    OPERATOR_TYPE="EDB Postgres Distributed / Global Cluster (PGD4K)"
+    [[ -z "${OPERATOR_TYPE}" ]] && OPERATOR_TYPE="EDB Postgres Distributed / Global Cluster (PGD4K)"
     VERSION_LABEL="PGD4K version"
     ;;
   *)
-    OPERATOR_TYPE="Unknown operator"
+    [[ -z "${OPERATOR_TYPE}" ]] && OPERATOR_TYPE="Unknown operator"
     VERSION_LABEL="Operator version"
     ;;
 esac
@@ -439,7 +447,7 @@ done
 
 SNAPSHOT_SIZE=$(wc -c < "${SNAPSHOT_TAR}" | tr -d ' ')
 if [[ "${SNAPSHOT_SIZE}" -lt 10000 ]]; then
-  error "cnpg-snapshot.tar.gz is only ${SNAPSHOT_SIZE} bytes — looks corrupt or a bare LFS pointer (git-lfs may not have run)."
+  error "cnpg-snapshot.tar.gz is only ${SNAPSHOT_SIZE} bytes — looks corrupt or incomplete."
 fi
 info "Snapshot size: $(( SNAPSHOT_SIZE / 1024 / 1024 )) MB — looks good."
 
@@ -449,6 +457,8 @@ echo -e "  Cluster to restore : ${BOLD}${CLUSTER_NAME}${NC}"
 echo -e "  Operator           : ${OPERATOR_TYPE}"
 echo -e "  Version            : v${CNPG_VERSION}"
 echo -e "  Operator namespace : ${OPERATOR_NS}"
+[[ -n "${OPERATOR_IMAGE}" ]] && \
+echo -e "  Operator image     : ${OPERATOR_IMAGE}"
 echo -e "  Snapshot size      : $(du -sh "${SNAPSHOT_TAR}" | cut -f1)"
 echo ""
 
@@ -520,8 +530,6 @@ case "${OPERATOR_NS}" in
 
   "cnpg-system")
     # ── Community CloudNativePG ───────────────────────────────────────────────
-    # Manifest is publicly available on GitHub. We derive the release branch
-    # from the major.minor part of the version (e.g. 1.29.1 → release-1.29).
     CNPG_RELEASE="release-${CNPG_VERSION%.*}"
     CNPG_MANIFEST="https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/${CNPG_RELEASE}/releases/cnpg-${CNPG_VERSION}.yaml"
     info "Applying community CNPG manifest: ${CNPG_MANIFEST}"
@@ -535,7 +543,7 @@ case "${OPERATOR_NS}" in
   "postgresql-operator-system")
     # ── EDB Postgres for CloudNativePG (CNP) ─────────────────────────────────
     # The EDB CNP operator image is baked into the Docker snapshot (containerd cache).
-    # We create the namespace first so that when cnp-cluster-config.yaml is applied
+    # Create the namespace first so that when cnp-cluster-config.yaml is applied
     # in Step 8, the operator deployment can be created successfully.
     info "Creating postgresql-operator-system namespace..."
     kubectl create namespace postgresql-operator-system \
@@ -547,8 +555,7 @@ case "${OPERATOR_NS}" in
   "pgd-operator-system")
     # ── EDB Postgres Distributed / Global Cluster (PGD4K) ────────────────────
     # PGD requires cert-manager for TLS + the PGD operator manifest bootstrapped
-    # BEFORE the backup YAML is applied. The backup YAML then fills in pull secrets,
-    # config maps, services etc. that the operators need to function.
+    # BEFORE the backup YAML is applied.
 
     # Step 7a: cert-manager (creates cert-manager namespace + CRDs)
     info "Installing cert-manager ${CERT_MANAGER_VERSION}..."
@@ -565,11 +572,9 @@ case "${OPERATOR_NS}" in
       --timeout=120s \
       2>/dev/null || warn "cert-manager pods not fully Ready yet — continuing anyway."
 
-    # Extra wait for the webhook endpoint to register and become reachable.
-    # Without this, Issuer creation via the webhook fails with "connection refused".
+    # Extra wait for the webhook endpoint to register and become reachable
     info "Waiting 30 s for cert-manager webhook endpoint to register..."
     sleep 30
-    # Bounce the webhook deployment to ensure endpoint is fresh
     kubectl rollout restart deployment/cert-manager-webhook \
       -n cert-manager --context "kind-${CLUSTER_NAME}" &>/dev/null || true
     kubectl rollout status deployment/cert-manager-webhook \
@@ -577,7 +582,7 @@ case "${OPERATOR_NS}" in
       --timeout=60s &>/dev/null || true
     success "cert-manager ${CERT_MANAGER_VERSION} installed and webhook ready."
 
-    # Step 7b: PGD operator manifest (creates pgd-operator-system namespace + operator deployment)
+    # Step 7b: PGD operator manifest
     PGD_MANIFEST="https://get.enterprisedb.io/pg4k-pgd/pg4k-pgd-${CNPG_VERSION}.yaml"
     info "Applying EDB PGD4K operator v${CNPG_VERSION} manifest: ${PGD_MANIFEST}"
     kubectl apply \
@@ -587,8 +592,7 @@ case "${OPERATOR_NS}" in
       || warn "PGD operator manifest had warnings — check pods below."
     success "EDB PGD4K operator manifest applied."
 
-    # Step 7c: Inject EDB pull secret into pgd-operator-system NOW so the operator
-    # container can pull its image from docker.enterprisedb.com without ImagePullBackOff.
+    # Step 7c: Inject EDB pull secret into pgd-operator-system
     info "Injecting EDB pull secret into pgd-operator-system..."
     python3 -c "
 import sys, re
@@ -617,8 +621,6 @@ esac
 step "Step 8 · Apply Kubernetes configs  (Namespaces first → full cluster config)"
 
 # Pass 1: Create all Namespace objects first.
-# A fresh kind cluster has no user namespaces. Resources inside a namespace
-# fail with "namespaces not found" if that namespace does not exist yet.
 info "Pass 1: Creating all Namespace resources from backup..."
 python3 -c "
 import sys, re
@@ -636,7 +638,7 @@ if ns_docs:
 && success "Namespaces created." \
 || warn "Namespace creation had warnings (may be OK if they already exist)."
 
-# Pass 2: Apply full cluster configuration (namespaces now exist)
+# Pass 2: Apply full cluster configuration
 info "Pass 2: Applying full cluster configuration..."
 kubectl apply \
   --context "kind-${CLUSTER_NAME}" \
@@ -672,9 +674,7 @@ else
   warn "Verify manually: kubectl get pods --context kind-${CLUSTER_NAME} -n ${OPERATOR_NS}"
 fi
 
-# PGD4K: wait for CRDs to be registered before applying blueprints.
-# The PGD operator registers pgdgroups.pgd.k8s.enterprisedb.io only after startup.
-# Applying PGDGroup objects before the CRD exists causes "no matches for kind PGDGroup".
+# PGD4K: wait for CRDs to be registered before applying blueprints
 if [[ "${OPERATOR_NS}" == "pgd-operator-system" ]]; then
   info "PGD4K cluster — waiting for PGD CRDs to be registered (up to 120 s)..."
   CRD_DEADLINE=$(( $(date +%s) + 120 ))
@@ -696,8 +696,7 @@ fi
 # ── Step 10: Apply database blueprints ────────────────────────────────────────
 step "Step 10 · Apply database blueprints  (${OPERATOR_TYPE})"
 
-# PGD4K: cert-manager Issuers must exist before PGDGroups can provision TLS.
-# Blueprints file contains Issuers exported by docker-cluster-backup.sh.
+# PGD4K: cert-manager Issuers must exist before PGDGroups can provision TLS
 if [[ "${OPERATOR_NS}" == "pgd-operator-system" ]]; then
   info "Applying cert-manager Issuers/Certificates first (PGD4K requires TLS)..."
   python3 -c "

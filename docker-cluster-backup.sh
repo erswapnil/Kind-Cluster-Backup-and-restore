@@ -2,10 +2,9 @@
 # =============================================================================
 # docker-cluster-backup.sh
 # Backs up a kind cluster (CNPG / EDB CNP / PGD4K) and uploads all artifacts
-# to a GitHub repo automatically using Git LFS for the snapshot tar.
+# to a GitHub Release — no Git LFS required.
 #
 # Compatible with macOS default bash 3.2+
-# No zip files — artifacts are uploaded directly to GitHub.
 #
 # Usage:
 #   chmod +x docker-cluster-backup.sh && ./docker-cluster-backup.sh
@@ -16,11 +15,12 @@
 #
 # What it does automatically:
 #   - Auto-detects operator type (CNPG / EDB CNP / EDB PGD4K) and version
-#   - docker commit + save → cnpg-snapshot.tar  (uploaded via Git LFS)
+#   - docker commit --pause=false + save → cnpg-snapshot.tar.gz
+#   - Splits snapshot into 50 MB chunks → each uploads and confirms quickly
 #   - kubectl export     → cnp-cluster-config.yaml
 #   - kubectl export CRDs → cnpg-db-blueprints.yaml
 #   - Writes metadata files (cnpg-version.txt, operator-namespace.txt, etc.)
-#   - Uploads everything to:  <repo>/<cluster-name>/
+#   - Uploads everything to a GitHub Release
 #
 # Security:
 #   - GitHub PAT is read with hidden input (not echoed to terminal)
@@ -58,21 +58,10 @@ echo ""
 
 # ── Pre-flight ────────────────────────────────────────────────────────────────
 step "Pre-flight checks"
-for cmd in docker kubectl kind git python3 curl; do
+for cmd in docker kubectl kind python3 curl split; do
   command -v "$cmd" &>/dev/null || error "$cmd not found. Install it and retry."
 done
 docker info &>/dev/null 2>&1 || error "Docker is not running. Start Docker Desktop first."
-
-if ! git lfs version &>/dev/null 2>&1; then
-  warn "git-lfs not found. Installing via Homebrew..."
-  if command -v brew &>/dev/null; then
-    brew install git-lfs
-    git lfs install --system
-    success "git-lfs installed."
-  else
-    error "git-lfs is required (snapshots stored via LFS). Install: https://git-lfs.com"
-  fi
-fi
 success "All pre-flight checks passed."
 
 # ── Step 1: Select cluster ────────────────────────────────────────────────────
@@ -230,7 +219,7 @@ if [[ -n "${OPERATOR_NS}" && -n "${CNPG_VERSION}" ]]; then
   success "Operator   : ${OPERATOR_TYPE}"
   success "Namespace  : ${OPERATOR_NS}"
   success "Version    : ${CNPG_VERSION}"
-  [[ -n "${OPERATOR_IMAGE}" ]] && info "Image      : ${OPERATOR_IMAGE}"
+  [[ -n "${OPERATOR_IMAGE}" ]] && success "Image      : ${OPERATOR_IMAGE}"
 elif [[ -n "${OPERATOR_NS}" && -z "${CNPG_VERSION}" ]]; then
   # Operator type known but version not found — just ask for version
   success "Operator   : ${OPERATOR_TYPE}"
@@ -308,25 +297,14 @@ REPO_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
 [[ "${REPO_CHECK}" != "200" ]] && error "Repo '${GITHUB_USER}/${GITHUB_REPO}' not found (HTTP ${REPO_CHECK})."
 success "Repo ${GITHUB_USER}/${GITHUB_REPO} is accessible."
 
-# Check if cluster folder already exists
-FOLDER_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "Authorization: token ${GITHUB_TOKEN}" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${CLUSTER_NAME}")
-if [[ "${FOLDER_CHECK}" == "200" ]]; then
-  echo ""
-  warn "Folder '${CLUSTER_NAME}/' already exists in the repo."
-  read -rp "  Overwrite existing backup? [Y/n]: " OVERWRITE
-  OVERWRITE="${OVERWRITE:-Y}"
-  [[ ! "${OVERWRITE}" =~ ^[Yy]$ ]] && { info "Aborted."; exit 0; }
-fi
-
 # ── Confirm ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}Cluster      :${NC} ${CLUSTER_NAME}  (container: ${CONTAINER_ID})"
 echo -e "  ${BOLD}Operator     :${NC} ${OPERATOR_TYPE} v${CNPG_VERSION}"
 echo -e "  ${BOLD}Namespace    :${NC} ${OPERATOR_NS}"
-echo -e "  ${BOLD}GitHub target:${NC} ${GITHUB_USER}/${GITHUB_REPO}/${CLUSTER_NAME}/"
+[[ -n "${OPERATOR_IMAGE}" ]] && \
+echo -e "  ${BOLD}Image        :${NC} ${OPERATOR_IMAGE}"
+echo -e "  ${BOLD}GitHub target:${NC} ${GITHUB_USER}/${GITHUB_REPO} (GitHub Release)"
 echo ""
 read -rp "Start backup? [Y/n]: " GO
 GO="${GO:-Y}"
@@ -402,7 +380,6 @@ export_crd "clusters.postgresql.cnpg.io"                    "clusters.postgresql
 export_crd "poolers.postgresql.cnpg.io"                     "poolers.postgresql.cnpg.io"
 export_crd "scheduledbackups.postgresql.cnpg.io"            "scheduledbackups.postgresql.cnpg.io"
 # EDB Postgres for Kubernetes / CNP (postgresql-operator-system)
-# Uses postgresql.k8s.enterprisedb.io API group
 export_crd "clusters.postgresql.k8s.enterprisedb.io"        "clusters.postgresql.k8s.enterprisedb.io"
 export_crd "poolers.postgresql.k8s.enterprisedb.io"         "poolers.postgresql.k8s.enterprisedb.io"
 export_crd "scheduledbackups.postgresql.k8s.enterprisedb.io" "scheduledbackups.postgresql.k8s.enterprisedb.io"
@@ -424,14 +401,14 @@ fi
 
 # ── Write metadata files ──────────────────────────────────────────────────────
 echo "${CNPG_VERSION}"   > "${WORK_DIR}/cnpg-version.txt"
-echo "${CLUSTER_NAME}"  > "${WORK_DIR}/cluster-name.txt"
-echo "${OPERATOR_NS}"   > "${WORK_DIR}/operator-namespace.txt"
-echo "${OPERATOR_TYPE}" > "${WORK_DIR}/operator-type.txt"
+echo "${CLUSTER_NAME}"   > "${WORK_DIR}/cluster-name.txt"
+echo "${OPERATOR_NS}"    > "${WORK_DIR}/operator-namespace.txt"
+echo "${OPERATOR_TYPE}"  > "${WORK_DIR}/operator-type.txt"
 [[ -n "${OPERATOR_IMAGE}" ]]       && echo "${OPERATOR_IMAGE}"       > "${WORK_DIR}/operator-image.txt"
 [[ -n "${CERT_MANAGER_VERSION}" ]] && echo "${CERT_MANAGER_VERSION}" > "${WORK_DIR}/cert-manager-version.txt"
 success "Metadata files written."
 
-# ── Step 7: Upload to GitHub Release (no Git LFS — no bandwidth limits) ──────
+# ── Step 7: Upload to GitHub Release ─────────────────────────────────────────
 step "Step 7 · Upload to GitHub Release  (${GITHUB_USER}/${GITHUB_REPO})"
 
 RELEASE_TAG="backup-${CLUSTER_NAME}-$(date +%Y%m%d-%H%M%S)"
@@ -476,32 +453,78 @@ UPLOAD_BASE=$(echo "${REL_OUT}" | tail -1)
 success "Release created: ${RELEASE_TAG} (ID: ${RELEASE_ID})"
 info "View at: https://github.com/${GITHUB_USER}/${GITHUB_REPO}/releases/tag/${RELEASE_TAG}"
 
-# ── Upload helper (with retry + live progress bar) ───────────────────────────
+# ── Upload helper: background curl + live timer + GitHub API poller ───────────
 upload_asset() {
-  local file="$1" name="$2"
+  local file="$1" name="$2" chunk_label="${3:-}"
   local size_bytes size_mb
   size_bytes=$(wc -c < "${file}" | tr -d ' ')
   size_mb=$(( size_bytes / 1024 / 1024 ))
   local RESP_FILE="${WORK_DIR}/.upload_resp"
+  local HTTP_FILE="${WORK_DIR}/.upload_http"
 
   for attempt in 1 2 3; do
-    info "Uploading ${name} (${size_mb} MB, attempt ${attempt}/3)..."
+    if [[ -n "${chunk_label}" ]]; then
+      info "Uploading ${chunk_label} — ${name} (${size_mb} MB, attempt ${attempt}/3)..."
+    else
+      info "Uploading ${name} (${size_mb} MB, attempt ${attempt}/3)..."
+    fi
     echo ""
-    # -#  → progress bar goes to stderr (terminal directly via 2>/dev/tty)
-    # -o  → response body saved to file (not mixed with HTTP code)
-    # -w  → HTTP code captured to stdout only
-    HTTP=$(curl -# \
-      -o "${RESP_FILE}" \
-      -w "%{http_code}" \
-      -H "Authorization: token ${GITHUB_TOKEN}" \
-      -H "Content-Type: application/octet-stream" \
-      --max-time 7200 \
-      --data-binary @"${file}" \
-      "${UPLOAD_BASE}?name=${name}" 2>/dev/tty) || HTTP="000"
+
+    # Run curl in background so we can show a live timer while GitHub processes
+    rm -f "${HTTP_FILE}" "${RESP_FILE}"
+    {
+      CODE=$(curl -# \
+        -o "${RESP_FILE}" \
+        -w "%{http_code}" \
+        -H "Authorization: token ${GITHUB_TOKEN}" \
+        -H "Content-Type: application/octet-stream" \
+        --max-time 7200 \
+        --data-binary @"${file}" \
+        "${UPLOAD_BASE}?name=${name}" 2>/dev/tty) || CODE="000"
+      echo "${CODE}" > "${HTTP_FILE}"
+    } &
+    CURL_PID=$!
+
+    # Show live timer while curl is running (upload + GitHub processing)
+    START_TS=$(date +%s)
+    while kill -0 "${CURL_PID}" 2>/dev/null; do
+      ELAPSED=$(( $(date +%s) - START_TS ))
+      if [[ ${ELAPSED} -gt 5 ]]; then
+        printf "\r  ${CYAN}[INFO]${NC} Waiting for GitHub to confirm upload... (%ds)  " "${ELAPSED}"
+      fi
+      sleep 1
+    done
     echo ""
+
+    HTTP=$(cat "${HTTP_FILE}" 2>/dev/null | tr -d '[:space:]' || echo "000")
+
     if [[ "${HTTP}" == "201" ]]; then
-      success "${name} uploaded successfully."
-      rm -f "${RESP_FILE}"
+      ELAPSED=$(( $(date +%s) - START_TS ))
+      success "${name} confirmed by GitHub (${ELAPSED}s total)."
+
+      # Poll GitHub API until asset state transitions from 'open' → 'uploaded'
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        ASSET_STATE=$(curl -s \
+          -H "Authorization: token ${GITHUB_TOKEN}" \
+          "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/${RELEASE_ID}/assets" \
+          2>/dev/null | python3 -c "
+import sys,json
+try:
+  assets=json.load(sys.stdin)
+  match=[a for a in assets if a.get('name')=='${name}']
+  print(match[0]['state'] if match else 'not_found')
+except: print('error')
+" || echo "error")
+        if [[ "${ASSET_STATE}" == "uploaded" ]]; then
+          success "${name} state: uploaded ✓"
+          rm -f "${RESP_FILE}" "${HTTP_FILE}"
+          return 0
+        fi
+        printf "\r  ${CYAN}[INFO]${NC} GitHub processing... (%d/10, state: %s)  " "${i}" "${ASSET_STATE}"
+        sleep 5
+      done
+      success "${name} uploaded (HTTP 201). Asset state may still be processing."
+      rm -f "${RESP_FILE}" "${HTTP_FILE}"
       return 0
     elif [[ "${HTTP}" == "422" ]]; then
       warn "${name} already exists in this release — skipping."
@@ -514,32 +537,48 @@ upload_asset() {
   error "Failed to upload ${name} after 3 attempts."
 }
 
-# ── Upload snapshot (split into 1.8 GB chunks if > 1.9 GB) ──────────────────
+# ── Upload snapshot in 50 MB chunks ──────────────────────────────────────────
+# Chunking gives per-chunk progress: each 50 MB confirms in ~1-2 min
+# instead of one silent 10-15 min wait for a 300+ MB single file.
 SNAPSHOT_FILE="${WORK_DIR}/cnpg-snapshot.tar.gz"
 SNAPSHOT_BYTES=$(wc -c < "${SNAPSHOT_FILE}" | tr -d ' ')
-MAX_BYTES=1900000000
+SNAPSHOT_MB=$(( SNAPSHOT_BYTES / 1024 / 1024 ))
+CHUNK_BYTES=52428800   # 50 MB per chunk
 
-if [[ ${SNAPSHOT_BYTES} -le ${MAX_BYTES} ]]; then
+SPLIT_DIR="${WORK_DIR}/parts"
+mkdir -p "${SPLIT_DIR}"
+split -b "${CHUNK_BYTES}" "${SNAPSHOT_FILE}" "${SPLIT_DIR}/cnpg-snapshot.part."
+
+PARTS=()
+while IFS= read -r p; do PARTS+=("${p}"); done < <(ls -1 "${SPLIT_DIR}"/cnpg-snapshot.part.* 2>/dev/null | sort)
+TOTAL_PARTS=${#PARTS[@]}
+
+echo ""
+if [[ ${TOTAL_PARTS} -eq 1 ]]; then
+  # Snapshot fits in one chunk — upload as a single named file
+  info "Snapshot is ${SNAPSHOT_MB} MB — uploading as single file."
   upload_asset "${SNAPSHOT_FILE}" "cnpg-snapshot.tar.gz"
 else
-  SNAP_GB=$(( SNAPSHOT_BYTES / 1024 / 1024 / 1024 ))
-  info "Snapshot is ${SNAP_GB} GB — splitting into 1.8 GB chunks for upload..."
-  SPLIT_DIR="${WORK_DIR}/parts"
-  mkdir -p "${SPLIT_DIR}"
-  split -b 1800000000 "${SNAPSHOT_FILE}" "${SPLIT_DIR}/cnpg-snapshot.part."
-  PARTS=()
-  while IFS= read -r p; do PARTS+=("${p}"); done < <(find "${SPLIT_DIR}" -name "cnpg-snapshot.part.*" | sort)
-  TOTAL_PARTS=${#PARTS[@]}
-  success "Split into ${TOTAL_PARTS} parts."
-  for i in "${!PARTS[@]}"; do
-    SUFFIX="${PARTS[$i]##*.}"
-    upload_asset "${PARTS[$i]}" "cnpg-snapshot.part.${SUFFIX}"
+  info "Snapshot is ${SNAPSHOT_MB} MB — split into ${TOTAL_PARTS} chunks of 50 MB each."
+  info "Each chunk uploads and confirms separately — progress shown per chunk."
+  echo ""
+  PART_NUM=0
+  for part in "${PARTS[@]}"; do
+    PART_NUM=$(( PART_NUM + 1 ))
+    SUFFIX=$(basename "${part}" | sed 's/cnpg-snapshot\.part\.//')
+    echo -e "  ${BOLD}── Chunk ${PART_NUM} / ${TOTAL_PARTS} ──${NC}"
+    upload_asset "${part}" "cnpg-snapshot.part.${SUFFIX}" "Chunk ${PART_NUM}/${TOTAL_PARTS}"
+    echo ""
   done
+  # Store part count so restore script knows how many chunks to download
   printf '%d' "${TOTAL_PARTS}" > "${WORK_DIR}/snapshot-parts.txt"
   upload_asset "${WORK_DIR}/snapshot-parts.txt" "snapshot-parts.txt"
+  success "All ${TOTAL_PARTS} snapshot chunks uploaded."
 fi
 
 # ── Upload metadata files ────────────────────────────────────────────────────
+echo ""
+info "Uploading metadata files..."
 for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
           cluster-name.txt operator-namespace.txt operator-type.txt \
           operator-image.txt cert-manager-version.txt; do
@@ -547,7 +586,6 @@ for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
 done
 
 # ── Done ─────────────────────────────────────────────────────────────────────
-TAR_SIZE=$(du -sh "${SNAPSHOT_FILE}" | cut -f1)
 CFG_SIZE=$(du -sh "${WORK_DIR}/cnp-cluster-config.yaml" | cut -f1)
 BP_SIZE=$(du -sh  "${WORK_DIR}/cnpg-db-blueprints.yaml" | cut -f1)
 
@@ -559,7 +597,12 @@ echo ""
 echo -e "  ${CYAN}https://github.com/${GITHUB_USER}/${GITHUB_REPO}/releases/tag/${RELEASE_TAG}${NC}"
 echo ""
 echo -e "  ${BOLD}Files uploaded to GitHub Release:${NC}"
-echo -e "  ${GREEN}✓${NC}  cnpg-snapshot.tar.gz      ${TAR_SIZE}"
+if [[ ${TOTAL_PARTS} -gt 1 ]]; then
+  echo -e "  ${GREEN}✓${NC}  cnpg-snapshot (${TOTAL_PARTS} chunks × 50 MB)   ${SNAPSHOT_MB} MB total"
+  echo -e "  ${GREEN}✓${NC}  snapshot-parts.txt"
+else
+  echo -e "  ${GREEN}✓${NC}  cnpg-snapshot.tar.gz      ${SNAPSHOT_MB} MB"
+fi
 echo -e "  ${GREEN}✓${NC}  cnp-cluster-config.yaml   ${CFG_SIZE}"
 echo -e "  ${GREEN}✓${NC}  cnpg-db-blueprints.yaml   ${BP_SIZE}"
 echo -e "  ${GREEN}✓${NC}  cnpg-version.txt          (${CNPG_VERSION})"
