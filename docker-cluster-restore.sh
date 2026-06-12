@@ -283,7 +283,11 @@ else
   if [[ -z "${PARTS_COUNT_URL}" ]]; then
     error "No snapshot found in release ${SELECTED_TAG}. Backup may be incomplete."
   fi
-  TOTAL_PARTS=$(curl -sf "${PARTS_COUNT_URL}" | tr -d '[:space:]' || echo "0")
+  TOTAL_PARTS=$(curl -sfL "${PARTS_COUNT_URL}" | tr -d '[:space:]' || echo "0")
+  if [[ -z "${TOTAL_PARTS}" || "${TOTAL_PARTS}" -eq 0 ]]; then
+    # Fallback: count the part files directly from the asset map
+    TOTAL_PARTS=$(grep -c "^cnpg-snapshot\.part\." "${ASSET_MAP_FILE}" 2>/dev/null || echo "0")
+  fi
   [[ "${TOTAL_PARTS}" -eq 0 ]] && error "Could not determine snapshot part count."
 
   info "Snapshot was split into ${TOTAL_PARTS} chunks — downloading each chunk..."
