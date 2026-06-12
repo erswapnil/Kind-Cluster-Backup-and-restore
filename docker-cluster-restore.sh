@@ -238,16 +238,25 @@ ASSETS=$(python3 "${GET_ASSETS_PY}" "${GITHUB_USER}" "${GITHUB_REPO}" \
 
 [[ -z "${ASSETS}" ]] && error "Could not fetch assets for release ${SELECTED_TAG}."
 
-# Build asset URL map
-declare -A ASSET_URLS
-while IFS='|' read -r name url; do
-  ASSET_URLS["${name}"]="${url}"
+# Build asset URL map — bash 3.2 compatible (no declare -A / associative arrays)
+# Each line in the map file: "asset-name|download-url"
+ASSET_MAP_FILE="${WORK_DIR}/.asset_map"
+> "${ASSET_MAP_FILE}"
+while IFS='|' read -r aname aurl; do
+  [[ -z "${aname}" ]] && continue
+  printf '%s|%s\n' "${aname}" "${aurl}" >> "${ASSET_MAP_FILE}"
 done <<< "${ASSETS}"
+
+# Helper: return the download URL for a named asset (empty string if not found)
+asset_url() {
+  grep "^${1}|" "${ASSET_MAP_FILE}" 2>/dev/null | head -1 | cut -d'|' -f2-
+}
 
 # Download helper
 download_asset() {
   local name="$1" dest="$2"
-  local url="${ASSET_URLS[${name}]:-}"
+  local url
+  url=$(asset_url "${name}")
   [[ -z "${url}" ]] && return 1
   for attempt in 1 2 3; do
     info "Downloading ${name} (attempt ${attempt}/3)..."
@@ -265,12 +274,12 @@ download_asset() {
 # Download snapshot — handle single file or split chunks
 SNAPSHOT_DEST="${WORK_DIR}/snapshot.tar.gz"
 
-if [[ -n "${ASSET_URLS[cnpg-snapshot.tar.gz]:-}" ]]; then
+if [[ -n "$(asset_url "cnpg-snapshot.tar.gz")" ]]; then
   # Single file (small snapshot that fit in one chunk)
   download_asset "cnpg-snapshot.tar.gz" "${SNAPSHOT_DEST}" || error "Failed to download snapshot."
 else
   # Split parts — find and download all chunks in order
-  PARTS_COUNT_URL="${ASSET_URLS[snapshot-parts.txt]:-}"
+  PARTS_COUNT_URL=$(asset_url "snapshot-parts.txt")
   if [[ -z "${PARTS_COUNT_URL}" ]]; then
     error "No snapshot found in release ${SELECTED_TAG}. Backup may be incomplete."
   fi
@@ -281,14 +290,14 @@ else
   PARTS_DIR="${WORK_DIR}/parts"
   mkdir -p "${PARTS_DIR}"
 
-  # Collect part names from assets (cnpg-snapshot.part.aa, ab, ac, ...)
+  # Collect part names from the map file (cnpg-snapshot.part.aa, ab, ac, ...)
   PART_FILES=()
-  for name in "${!ASSET_URLS[@]}"; do
-    [[ "${name}" == cnpg-snapshot.part.* ]] && PART_FILES+=("${name}")
-  done
+  while IFS='|' read -r aname aurl; do
+    case "${aname}" in cnpg-snapshot.part.*) PART_FILES+=("${aname}") ;; esac
+  done < "${ASSET_MAP_FILE}"
 
   # Sort part files alphabetically (preserves split order: aa, ab, ac, ...)
-  IFS=$'\n' PART_FILES=($(sort <<< "${PART_FILES[*]}")); unset IFS
+  IFS=$'\n' PART_FILES=($(printf '%s\n' "${PART_FILES[@]}" | sort)); unset IFS
 
   PART_NUM=0
   for pf in "${PART_FILES[@]}"; do
@@ -299,7 +308,8 @@ else
   done
 
   # Reassemble all chunks in order
-  info "Reassembling snapshot from ${#PART_FILES[@]} chunks..."
+  PART_COUNT=${#PART_FILES[@]}
+  info "Reassembling snapshot from ${PART_COUNT} chunks..."
   cat "${PARTS_DIR}"/cnpg-snapshot.part.* > "${SNAPSHOT_DEST}"
   success "Snapshot reassembled: $(du -sh "${SNAPSHOT_DEST}" | cut -f1)"
 fi
@@ -313,7 +323,7 @@ for f in cnp-cluster-config.yaml cnpg-db-blueprints.yaml cnpg-version.txt \
           cluster-name.txt operator-namespace.txt operator-type.txt \
           operator-image.txt cert-manager-version.txt \
           pgd-cnp-image.txt pgd-cnp-version.txt; do
-  if [[ -n "${ASSET_URLS[${f}]:-}" ]]; then
+  if [[ -n "$(asset_url "${f}")" ]]; then
     download_asset "${f}" "${BACKUP_DIR}/${f}" || warn "Could not download ${f} (non-fatal)."
   fi
 done
