@@ -536,17 +536,22 @@ fi
 # ── Step 6: Create kind cluster ───────────────────────────────────────────────
 step "Step 6 · Create kind cluster '${CLUSTER_NAME}'"
 KIND_CONFIG="${WORK_DIR}/kind-config.yaml"
+
+# Use the committed snapshot as the node image for BOTH nodes.
+# The snapshot was taken from the original cluster's worker node, which holds
+# the operator and database images in its containerd cache.  Using it as the
+# node image means those images are pre-cached — no registry credentials needed.
 cat <<EOF > "${KIND_CONFIG}"
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
+  image: ${ORIG_SNAPSHOT_TAG}
 - role: worker
+  image: ${ORIG_SNAPSHOT_TAG}
 EOF
-success "kind-config.yaml written."
+success "kind-config.yaml written (using snapshot image: ${ORIG_SNAPSHOT_TAG})."
 
-# Create a fresh kind cluster with the standard node image.
-# The snapshot was loaded into Docker above to pre-cache all workload images.
 kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}"
 CONTEXT="kind-${CLUSTER_NAME}"
 success "kind cluster '${CLUSTER_NAME}' created."
