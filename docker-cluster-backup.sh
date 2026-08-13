@@ -365,10 +365,29 @@ WORK_DIR="$(mktemp -d -t kind-backup-XXXXXX)"
 info "Working directory: ${WORK_DIR}"
 
 # ── Step 4: Docker commit + save ──────────────────────────────────────────────
-step "Step 4 · Snapshot control-plane container"
-info "docker commit ${CONTAINER_ID} → ${CLUSTER_NAME}-snapshot:v1"
+step "Step 4 · Snapshot cluster node (captures workload images)"
+
+# Prefer the WORKER node for the snapshot — operator and DB images live in the
+# worker's containerd cache, not the control-plane's.  The restore will use this
+# committed image as the kind node image so pods find their images pre-cached
+# without needing registry credentials.
+# Fall back to control-plane for single-node clusters.
+COMMIT_CONTAINER="${CONTAINER_ID}"   # default: control-plane
+WORKER_ID=$(docker ps \
+  --filter "name=${CLUSTER_NAME}-worker" \
+  --filter "status=running" \
+  --format "{{.ID}}" | head -1 || true)
+
+if [[ -n "${WORKER_ID}" ]]; then
+  info "Worker node found (${WORKER_ID}) — committing worker to capture workload images."
+  COMMIT_CONTAINER="${WORKER_ID}"
+else
+  info "No worker node found — committing control-plane (single-node cluster)."
+fi
+
 # --pause=false keeps the API server running during commit so Step 5 kubectl works
-docker commit --pause=false "${CONTAINER_ID}" "${CLUSTER_NAME}-snapshot:v1"
+info "docker commit ${COMMIT_CONTAINER} → ${CLUSTER_NAME}-snapshot:v1"
+docker commit --pause=false "${COMMIT_CONTAINER}" "${CLUSTER_NAME}-snapshot:v1"
 info "docker save → cnpg-snapshot.tar.gz  (compressing with gzip — may take a few minutes)..."
 docker save "${CLUSTER_NAME}-snapshot:v1" | gzip > "${WORK_DIR}/cnpg-snapshot.tar.gz"
 success "Snapshot saved: $(du -sh "${WORK_DIR}/cnpg-snapshot.tar.gz" | cut -f1)  (compressed)"
