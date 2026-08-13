@@ -536,25 +536,35 @@ fi
 # ── Step 6: Create kind cluster ───────────────────────────────────────────────
 step "Step 6 · Create kind cluster '${CLUSTER_NAME}'"
 KIND_CONFIG="${WORK_DIR}/kind-config.yaml"
-
-# Use the committed snapshot as the node image for BOTH nodes.
-# The snapshot was taken from the original cluster's worker node, which holds
-# the operator and database images in its containerd cache.  Using it as the
-# node image means those images are pre-cached — no registry credentials needed.
 cat <<EOF > "${KIND_CONFIG}"
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
-  image: ${ORIG_SNAPSHOT_TAG}
 - role: worker
-  image: ${ORIG_SNAPSHOT_TAG}
 EOF
-success "kind-config.yaml written (using snapshot image: ${ORIG_SNAPSHOT_TAG})."
+success "kind-config.yaml written."
 
 kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}"
 CONTEXT="kind-${CLUSTER_NAME}"
 success "kind cluster '${CLUSTER_NAME}' created."
+
+# ── EDB registry pull secret (EDB CNP / PGD4K only) ──────────────────────────
+# EDB operator images are hosted on docker.enterprisedb.com and require auth.
+# Create the pull secret now so operator pods can pull images without error.
+EDB_PULL_SECRET_PASS=""
+if [[ "${OPERATOR_NS}" != "cnpg-system" ]]; then
+  echo ""
+  echo -e "  ${BOLD}EDB registry credentials${NC}"
+  echo "  Operator images are hosted on docker.enterprisedb.com and require auth."
+  echo "  Provide credentials to create the pull secret automatically."
+  echo "  (Press Enter to skip — you can create it manually if pods fail.)"
+  echo ""
+  read -rp "  EDB registry username [k8s]: " EDB_PULL_USER
+  EDB_PULL_USER="${EDB_PULL_USER:-k8s}"
+  read -rsp "  EDB registry token/password (hidden, Enter to skip): " EDB_PULL_SECRET_PASS
+  echo ""
+fi
 
 # ── Step 7: Install operator ──────────────────────────────────────────────────
 step "Step 7 · Install operator v${CNPG_VERSION}  (${OPERATOR_TYPE})"
@@ -575,13 +585,26 @@ case "${OPERATOR_NS}" in
 
   "postgresql-operator-system")
     # ── EDB Postgres for CloudNativePG (CNP) ─────────────────────────────────
-    # The EDB CNP operator image is baked into the Docker snapshot (containerd cache).
-    # Create the namespace first so that when cnp-cluster-config.yaml is applied
-    # in Step 8, the operator deployment can be created successfully.
     info "Creating postgresql-operator-system namespace..."
     kubectl create namespace postgresql-operator-system \
       --context "${CONTEXT}" 2>/dev/null || true
-    success "Namespace postgresql-operator-system ready."
+    if [[ -n "${EDB_PULL_SECRET_PASS}" ]]; then
+      for _ns in postgresql-operator-system default; do
+        kubectl create secret docker-registry edb-pull-secret \
+          --docker-server=docker.enterprisedb.com \
+          --docker-username="${EDB_PULL_USER}" \
+          --docker-password="${EDB_PULL_SECRET_PASS}" \
+          -n "${_ns}" --context "${CONTEXT}" \
+          --dry-run=client -o yaml \
+          | kubectl apply --context "${CONTEXT}" -f - 2>/dev/null || true
+      done
+      success "EDB pull secret created in postgresql-operator-system + default."
+    else
+      warn "No EDB credentials provided — operator may ImagePullBackOff."
+      warn "If so, run: kubectl create secret docker-registry edb-pull-secret \\"
+      warn "  --docker-server=docker.enterprisedb.com --docker-username=k8s \\"
+      warn "  --docker-password=<token> -n postgresql-operator-system"
+    fi
     info "EDB CNP operator deployment will be restored from cnp-cluster-config.yaml in Step 8."
     ;;
 
@@ -625,9 +648,24 @@ case "${OPERATOR_NS}" in
       || warn "PGD operator manifest had warnings — check pods below."
     success "EDB PGD4K operator manifest applied."
 
-    # Step 7c: Inject EDB pull secret into pgd-operator-system
-    info "Injecting EDB pull secret into pgd-operator-system..."
-    python3 -c "
+    # Step 7c: Create EDB pull secret in pgd-operator-system and default
+    if [[ -n "${EDB_PULL_SECRET_PASS}" ]]; then
+      info "Creating EDB pull secret in pgd-operator-system + default..."
+      for _ns in pgd-operator-system default; do
+        kubectl create namespace "${_ns}" --context "${CONTEXT}" 2>/dev/null || true
+        kubectl create secret docker-registry edb-pull-secret \
+          --docker-server=docker.enterprisedb.com \
+          --docker-username="${EDB_PULL_USER}" \
+          --docker-password="${EDB_PULL_SECRET_PASS}" \
+          -n "${_ns}" --context "${CONTEXT}" \
+          --dry-run=client -o yaml \
+          | kubectl apply --context "${CONTEXT}" -f - 2>/dev/null || true
+      done
+      success "EDB pull secret created in pgd-operator-system + default."
+    else
+      # Fall back to extracting from backup YAML (may have stale token)
+      info "No credentials provided — extracting pull secret from backup (token may be stale)..."
+      python3 -c "
 import sys, re
 with open(sys.argv[1]) as f:
     content = f.read()
@@ -639,9 +677,10 @@ for part in parts:
         print('---')
         print(part.strip())
 " "${CLUSTER_CONFIG}" \
-    | kubectl apply --context "kind-${CLUSTER_NAME}" -f - --validate=false 2>/dev/null \
-    && success "EDB pull secret applied to pgd-operator-system." \
-    || warn "Could not apply pull secret — operator may ImagePullBackOff."
+      | kubectl apply --context "kind-${CLUSTER_NAME}" -f - --validate=false 2>/dev/null \
+      && success "EDB pull secret applied from backup." \
+      || warn "Could not apply pull secret — operator may ImagePullBackOff."
+    fi
     ;;
 
   *)
