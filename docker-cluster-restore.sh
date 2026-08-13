@@ -718,6 +718,23 @@ kubectl apply \
   --validate=false || warn "Some conflicts above are expected and safe to ignore."
 success "Kubernetes configs applied."
 
+# Re-apply EDB pull secret — the backup's cluster config contains the old token
+# and kubectl apply above will have overwritten our freshly-created secret.
+if [[ -n "${EDB_PULL_SECRET_PASS:-}" ]]; then
+  info "Re-applying EDB pull secret (backup had old token, refreshing now)..."
+  for _ns in "${OPERATOR_NS}" default; do
+    kubectl create namespace "${_ns}" --context "${CONTEXT}" 2>/dev/null || true
+    kubectl create secret docker-registry edb-pull-secret \
+      --docker-server=docker.enterprisedb.com \
+      --docker-username="${EDB_PULL_USER}" \
+      --docker-password="${EDB_PULL_SECRET_PASS}" \
+      -n "${_ns}" --context "${CONTEXT}" \
+      --dry-run=client -o yaml \
+      | kubectl apply --context "${CONTEXT}" -f - 2>/dev/null || true
+  done
+  success "EDB pull secret refreshed with current credentials."
+fi
+
 # ── Step 9: Wait for operator ─────────────────────────────────────────────────
 step "Step 9 · Wait for ${OPERATOR_TYPE} to be ready  (${OPERATOR_NS})"
 
